@@ -56,7 +56,7 @@ object RecordingManager {
         surfaceProvider?.let { previewUseCase?.setSurfaceProvider(it) }
     }
 
-    @OptIn(ExperimentalCamera2Interop::class)
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     @SuppressLint("MissingPermission")
     fun bindCamera(
         context: Context,

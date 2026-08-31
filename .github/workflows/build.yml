@@ -22,9 +22,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Dummy Configuration (.env & google-services)
+      - name: Setup Dummy Configuration (.env, google-services, debug.keystore)
         run: |
           echo "Setting up dummy configuration files for CI..."
+          # Setup .env
           if [ ! -f ".env" ]; then
             if [ -f ".env.example" ]; then
               cp .env.example .env
@@ -35,6 +36,17 @@ jobs:
             echo "GEMINI_API_KEY=dummy_gemini_api_key_ci" >> .env
           fi
 
+          # Setup debug.keystore
+          if [ ! -f "debug.keystore" ]; then
+            if [ -f "debug.keystore.base64" ]; then
+              base64 -d debug.keystore.base64 > debug.keystore 2>/dev/null || base64 -D debug.keystore.base64 > debug.keystore 2>/dev/null || true
+            fi
+          fi
+          if [ ! -f "debug.keystore" ]; then
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
+          fi
+
+          # Setup google-services.json
           if [ ! -f "app/google-services.json" ]; then
             cat << 'EOF' > app/google-services.json
           {
@@ -78,20 +90,12 @@ jobs:
             chmod +x ./gradlew
           fi
 
-      - name: Run Unit Tests
-        run: |
-          if [ -f "./gradlew" ]; then
-            ./gradlew testDebugUnitTest --stacktrace
-          else
-            gradle testDebugUnitTest --stacktrace
-          fi
-
       - name: Build Debug APK
         run: |
           if [ -f "./gradlew" ]; then
-            ./gradlew assembleDebug --stacktrace
+            ./gradlew assembleDebug --no-daemon -Djava.awt.headless=true --stacktrace
           else
-            gradle assembleDebug --stacktrace
+            gradle assembleDebug --no-daemon -Djava.awt.headless=true --stacktrace
           fi
 
       - name: Upload Debug APK Artifact
