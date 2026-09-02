@@ -23,120 +23,274 @@ import kotlinx.coroutines.flow.StateFlow
 
 object EmergencyKeyManager {
     private const val TAG = "EmergencyKeyManager"
-    private const val MULTI_PRESS_WINDOW_MS = 2500L
-    private const val DOUBLE_DOWN_WINDOW_MS = 800L
-    private const val MIN_DEBOUNCE_INTERVAL_MS = 40L
-    private const val REQUIRED_PRESS_COUNT = 4
+    const val HOLD_START_DURATION_MS = 4000L // Press and hold both keys for 4 seconds to start
+    const val HOLD_STOP_DURATION_MS = 2000L  // Press and hold both keys for 2 seconds to stop
 
-    private data class KeyPressRecord(val keyCode: Int, val timestamp: Long)
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val pressHistory = mutableListOf<KeyPressRecord>()
+    private var isVolUpPressed = false
+    private var isVolDownPressed = false
+    private var bothHeldStartTime = 0L
+    private var singleHeldKeyCode: Int? = null
+    private var singleHeldStartTime = 0L
+    private var isTriggerExecuted = false
+    private var pendingHoldRunnable: Runnable? = null
+    private var lastToggleTime = 0L
 
     private val _emergencyTriggerCount = MutableStateFlow(0)
     val emergencyTriggerCount: StateFlow<Int> = _emergencyTriggerCount
 
     /**
-     * Call when either Volume Up or Volume Down key press is detected.
-     * Triggers recording if 4 volume key presses (Up/Down) or 2 rapid Volume-Down presses are registered.
-     * Returns true if emergency trigger condition is met and handled.
+     * Primary entry point for hardware key events (Volume Up / Volume Down).
+     * Handles: Hold both keys (4s to start, 2s to stop).
      */
     @Synchronized
-    fun onVolumeKeyPressed(context: Context, keyCode: Int): Boolean {
-        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
+    fun onKeyEvent(context: Context, event: KeyEvent): Boolean {
+        val keyCode = event.keyCode
+        if (keyCode != KeyEvent.KEYCODE_VOLUME_DOWN && keyCode != KeyEvent.KEYCODE_VOLUME_UP) {
             return false
         }
 
         val currentTime = System.currentTimeMillis()
 
-        // Remove expired presses outside the multi-press window
-        pressHistory.removeAll { currentTime - it.timestamp > MULTI_PRESS_WINDOW_MS }
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                val isFirstDown = (event.repeatCount == 0)
 
-        // Debounce hardware contact bounce for the exact same key
-        val lastPress = pressHistory.lastOrNull()
-        if (lastPress != null && lastPress.keyCode == keyCode && (currentTime - lastPress.timestamp) < MIN_DEBOUNCE_INTERVAL_MS) {
-            return false
+                if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+                    isVolUpPressed = true
+                } else if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                    isVolDownPressed = true
+                }
+
+                // Check if BOTH keys are currently pressed
+                if (isVolUpPressed && isVolDownPressed) {
+                    if (bothHeldStartTime == 0L) {
+                        bothHeldStartTime = currentTime
+                        isTriggerExecuted = false
+
+                        // Cancel single key pending hold
+                        pendingHoldRunnable?.let { mainHandler.removeCallbacks(it) }
+
+                        val isRecording = isCurrentlyRecording()
+                        val requiredDuration = if (isRecording) HOLD_STOP_DURATION_MS else HOLD_START_DURATION_MS
+
+                        Log.d(TAG, "Both volume keys pressed down. Required hold time: ${requiredDuration}ms (isRecording=$isRecording)")
+
+                        val holdTask = Runnable {
+                            synchronized(EmergencyKeyManager) {
+                                if (isVolUpPressed && isVolDownPressed && !isTriggerExecuted) {
+                                    isTriggerExecuted = true
+                                    lastToggleTime = System.currentTimeMillis()
+                                    Log.d(TAG, "Both keys held for ${requiredDuration}ms! Triggering emergency recording toggle.")
+                                    handleEmergencyToggle(context.applicationContext, isBothKeys = true)
+                                }
+                            }
+                        }
+                        pendingHoldRunnable = holdTask
+                        mainHandler.postDelayed(holdTask, requiredDuration)
+                    } else {
+                        // Check if held duration elapsed via repeat events
+                        val isRecording = isCurrentlyRecording()
+                        val requiredDuration = if (isRecording) HOLD_STOP_DURATION_MS else HOLD_START_DURATION_MS
+                        if (!isTriggerExecuted && (currentTime - bothHeldStartTime >= requiredDuration)) {
+                            isTriggerExecuted = true
+                            pendingHoldRunnable?.let { mainHandler.removeCallbacks(it) }
+                            pendingHoldRunnable = null
+                            lastToggleTime = currentTime
+                            Log.d(TAG, "Both keys hold completed via repeat event (${requiredDuration}ms)!")
+                            handleEmergencyToggle(context.applicationContext, isBothKeys = true)
+                            return true
+                        }
+                    }
+                    return isTriggerExecuted
+                } else {
+                    // Only ONE key is currently pressed
+                    if (isFirstDown) {
+                        singleHeldKeyCode = keyCode
+                        singleHeldStartTime = currentTime
+                        isTriggerExecuted = false
+
+                        // Cancel previous task
+                        pendingHoldRunnable?.let { mainHandler.removeCallbacks(it) }
+
+                        val isRecording = isCurrentlyRecording()
+                        val requiredDuration = if (isRecording) HOLD_STOP_DURATION_MS else HOLD_START_DURATION_MS
+
+                        val singleHoldTask = Runnable {
+                            synchronized(EmergencyKeyManager) {
+                                val isStillHeld = if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) isVolUpPressed else isVolDownPressed
+                                if (isStillHeld && !isTriggerExecuted) {
+                                    isTriggerExecuted = true
+                                    lastToggleTime = System.currentTimeMillis()
+                                    Log.d(TAG, "Single key held for ${requiredDuration}ms! Triggering.")
+                                    handleEmergencyToggle(context.applicationContext, isBothKeys = false)
+                                }
+                            }
+                        }
+                        pendingHoldRunnable = singleHoldTask
+                        mainHandler.postDelayed(singleHoldTask, requiredDuration)
+                    } else {
+                        // Repeat event for single key
+                        val isRecording = isCurrentlyRecording()
+                        val requiredDuration = if (isRecording) HOLD_STOP_DURATION_MS else HOLD_START_DURATION_MS
+                        if (!isTriggerExecuted && (currentTime - singleHeldStartTime >= requiredDuration)) {
+                            isTriggerExecuted = true
+                            pendingHoldRunnable?.let { mainHandler.removeCallbacks(it) }
+                            pendingHoldRunnable = null
+                            lastToggleTime = currentTime
+                            Log.d(TAG, "Single key hold completed via repeat event (${requiredDuration}ms)!")
+                            handleEmergencyToggle(context.applicationContext, isBothKeys = false)
+                            return true
+                        }
+                    }
+                }
+                return isTriggerExecuted
+            }
+
+            KeyEvent.ACTION_UP -> {
+                val wasTriggered = isTriggerExecuted
+
+                if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+                    isVolUpPressed = false
+                } else if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                    isVolDownPressed = false
+                }
+
+                // If either key is released, cancel both-keys hold timer
+                if (!isVolUpPressed || !isVolDownPressed) {
+                    bothHeldStartTime = 0L
+                }
+
+                // If all keys released, clear pending tasks
+                if (!isVolUpPressed && !isVolDownPressed) {
+                    pendingHoldRunnable?.let { mainHandler.removeCallbacks(it) }
+                    pendingHoldRunnable = null
+                    singleHeldKeyCode = null
+                    singleHeldStartTime = 0L
+                    isTriggerExecuted = false
+                }
+
+                return wasTriggered
+            }
         }
-
-        pressHistory.add(KeyPressRecord(keyCode, currentTime))
-
-        val totalPressesInWindow = pressHistory.size
-        val hasBothKeys = pressHistory.any { it.keyCode == KeyEvent.KEYCODE_VOLUME_UP } &&
-                pressHistory.any { it.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN }
-
-        // Condition 1: 4 volume key presses (Volume Up and Down 4 times)
-        val is4PressTrigger = totalPressesInWindow >= REQUIRED_PRESS_COUNT
-
-        // Condition 2: 2 rapid Volume Down presses within 800ms
-        val recentDownPresses = pressHistory.filter { it.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN }
-        val isDoubleDownTrigger = recentDownPresses.size >= 2 &&
-                (currentTime - recentDownPresses[recentDownPresses.size - 2].timestamp) <= DOUBLE_DOWN_WINDOW_MS
-
-        if (is4PressTrigger || isDoubleDownTrigger) {
-            pressHistory.clear()
-            Log.d(TAG, "Emergency key trigger activated! totalPresses=$totalPressesInWindow, hasBothKeys=$hasBothKeys, is4Press=$is4PressTrigger, isDoubleDown=$isDoubleDownTrigger")
-            handleEmergencyTrigger(context.applicationContext)
-            return true
-        }
-
         return false
     }
 
+    private fun isCurrentlyRecording(): Boolean {
+        val state = RecordingManager.recordingState.value
+        return state == RecordingState.RECORDING || state == RecordingState.STARTING || state == RecordingState.PAUSED
+    }
+
     /**
-     * Legacy helper for Volume Down only
+     * Helper for volume key press
+     */
+    fun onVolumeKeyPressed(context: Context, keyCode: Int): Boolean {
+        val simulatedDown = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+        return onKeyEvent(context, simulatedDown)
+    }
+
+    /**
+     * Helper for volume down
      */
     fun onVolumeDownPressed(context: Context): Boolean {
         return onVolumeKeyPressed(context, KeyEvent.KEYCODE_VOLUME_DOWN)
     }
 
-    private fun handleEmergencyTrigger(context: Context) {
+    private fun handleEmergencyToggle(context: Context, isBothKeys: Boolean) {
         _emergencyTriggerCount.value += 1
-        vibrateEmergency(context)
 
-        val currentState = RecordingManager.recordingState.value
-        Handler(Looper.getMainLooper()).post {
-            if (currentState == RecordingState.IDLE) {
-                Toast.makeText(context, "🚨 Emergency Recording Started", Toast.LENGTH_SHORT).show()
-                val intent = Intent(context, RecordingService::class.java).apply {
+        mainHandler.post {
+            val isRecording = isCurrentlyRecording()
+            Log.d(TAG, "Executing emergency toggle. isRecording=$isRecording, isBothKeys=$isBothKeys")
+
+            if (isRecording) {
+                // Stop and save after 2s hold
+                vibrateStop(context)
+                val msg = if (isBothKeys) "⏹️ Emergency Recording Stopped (Both keys held 2s)" else "⏹️ Emergency Recording Stopped (Held 2s)"
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                val stopIntent = Intent(context, RecordingService::class.java).apply {
+                    action = RecordingService.ACTION_STOP
+                }
+                context.startService(stopIntent)
+            } else {
+                // Start new recording after 4s hold
+                RecordingManager.resetStateIfError()
+                vibrateStart(context)
+                val msg = if (isBothKeys) "🚨 Emergency Recording Started (Both keys held 4s)" else "🚨 Emergency Recording Started (Held 4s)"
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                val startIntent = Intent(context, RecordingService::class.java).apply {
                     action = RecordingService.ACTION_START
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
+                    context.startForegroundService(startIntent)
                 } else {
-                    context.startService(intent)
+                    context.startService(startIntent)
                 }
-            } else {
-                Toast.makeText(context, "🚨 Emergency Recording Active", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     /**
-     * Tactile confirmation vibration pattern (two distinct pulses).
+     * Tactile confirmation vibration pattern on Start (two distinct strong pulses).
      */
-    fun vibrateEmergency(context: Context) {
+    fun vibrateStart(context: Context) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
                 val vibrator = vibratorManager?.defaultVibrator
                 vibrator?.vibrate(
-                    VibrationEffect.createWaveform(longArrayOf(0, 180, 80, 220), -1)
+                    VibrationEffect.createWaveform(longArrayOf(0, 200, 100, 250), -1)
                 )
             } else {
                 @Suppress("DEPRECATION")
                 val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     vibrator?.vibrate(
-                        VibrationEffect.createWaveform(longArrayOf(0, 180, 80, 220), -1)
+                        VibrationEffect.createWaveform(longArrayOf(0, 200, 100, 250), -1)
                     )
                 } else {
                     @Suppress("DEPRECATION")
-                    vibrator?.vibrate(longArrayOf(0, 180, 80, 220), -1)
+                    vibrator?.vibrate(longArrayOf(0, 200, 100, 250), -1)
                 }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Vibration feedback unavailable", e)
         }
     }
+
+    /**
+     * Tactile confirmation vibration pattern on Stop (one long pulse).
+     */
+    fun vibrateStop(context: Context) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                val vibrator = vibratorManager?.defaultVibrator
+                vibrator?.vibrate(
+                    VibrationEffect.createOneShot(350, VibrationEffect.DEFAULT_AMPLITUDE)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator?.vibrate(
+                        VibrationEffect.createOneShot(350, VibrationEffect.DEFAULT_AMPLITUDE)
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator?.vibrate(350)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Vibration feedback unavailable", e)
+        }
+    }
+
+    /**
+     * Alias for UI testing
+     */
+    fun vibrateEmergency(context: Context) = vibrateStart(context)
 
     /**
      * Checks if the Background Emergency Accessibility Service is enabled in Android System Settings.

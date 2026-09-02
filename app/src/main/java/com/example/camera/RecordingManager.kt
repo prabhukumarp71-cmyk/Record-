@@ -249,15 +249,18 @@ object RecordingManager {
                     _recordingState.value = RecordingState.IDLE
                     _recordingDurationMs.value = 0L
                     if (recordEvent.hasError()) {
-                        Log.e(TAG, "Video capture ends with error: ${recordEvent.error}")
-                        if (recordEvent.error != VideoRecordEvent.Finalize.ERROR_NO_VALID_DATA) {
-                            _recordingState.value = RecordingState.ERROR
-                        }
+                        Log.w(TAG, "Video capture finalized with code: ${recordEvent.error}")
                     }
                     onFinalizeCallback?.invoke(recordEvent)
                     onFinalizeCallback = null
                 }
             }
+        }
+    }
+
+    fun resetStateIfError() {
+        if (_recordingState.value == RecordingState.ERROR || _recordingState.value == RecordingState.STOPPING) {
+            _recordingState.value = RecordingState.IDLE
         }
     }
 
