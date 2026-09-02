@@ -95,7 +95,7 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "Press the Volume Down button 2 times quickly (within 0.8s) to start background video recording immediately with dual-pulse tactile vibration.",
+                        "Press both Volume Up and Down buttons 4 times in quick succession (or Volume Down 2x) to trigger background video recording with dual-pulse tactile vibration feedback.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

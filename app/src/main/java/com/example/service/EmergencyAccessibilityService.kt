@@ -9,11 +9,13 @@ import com.example.camera.EmergencyKeyManager
 class EmergencyAccessibilityService : AccessibilityService() {
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            val handled = EmergencyKeyManager.onVolumeDownPressed(this)
-            if (handled) {
-                Log.d(TAG, "Emergency recording triggered from background AccessibilityService via volume down double-press")
-                return true
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+                val handled = EmergencyKeyManager.onVolumeKeyPressed(this, event.keyCode)
+                if (handled) {
+                    Log.d(TAG, "Emergency recording triggered from background AccessibilityService via volume hardware key combination")
+                    return true
+                }
             }
         }
         return super.onKeyEvent(event)

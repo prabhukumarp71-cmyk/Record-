@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Background Recorder</string>
-    <string name="accessibility_service_desc">Enables volume down double-press hardware trigger to immediately start emergency background video recording.</string>
+    <string name="accessibility_service_desc">Enables Volume Up and Down hardware key trigger (4 times) to immediately start emergency background video recording.</string>
 </resources>

@@ -184,7 +184,7 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Emergency Key: Press Vol-Down 2x to auto-record",
+                        text = "Emergency Key: Press Vol Up & Down 4x to record",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSecondaryContainer
                     )

@@ -53,10 +53,12 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            val handled = EmergencyKeyManager.onVolumeDownPressed(this)
-            if (handled) {
-                return true
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+                val handled = EmergencyKeyManager.onVolumeKeyPressed(this, event.keyCode)
+                if (handled) {
+                    return true
+                }
             }
         }
         return super.dispatchKeyEvent(event)

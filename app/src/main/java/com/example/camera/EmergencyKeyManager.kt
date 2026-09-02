@@ -13,6 +13,7 @@ import android.os.VibratorManager
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
+import android.view.KeyEvent
 import android.widget.Toast
 import com.example.model.RecordingState
 import com.example.service.EmergencyAccessibilityService
@@ -22,32 +23,69 @@ import kotlinx.coroutines.flow.StateFlow
 
 object EmergencyKeyManager {
     private const val TAG = "EmergencyKeyManager"
-    private const val DOUBLE_PRESS_WINDOW_MS = 800L
-    private const val MIN_PRESS_INTERVAL_MS = 60L
+    private const val MULTI_PRESS_WINDOW_MS = 2500L
+    private const val DOUBLE_DOWN_WINDOW_MS = 800L
+    private const val MIN_DEBOUNCE_INTERVAL_MS = 40L
+    private const val REQUIRED_PRESS_COUNT = 4
 
-    private var lastVolumeDownTimestamp = 0L
+    private data class KeyPressRecord(val keyCode: Int, val timestamp: Long)
+
+    private val pressHistory = mutableListOf<KeyPressRecord>()
 
     private val _emergencyTriggerCount = MutableStateFlow(0)
     val emergencyTriggerCount: StateFlow<Int> = _emergencyTriggerCount
 
     /**
-     * Call when a Volume Down key press is detected.
-     * Returns true if emergency double press was handled and consumed.
+     * Call when either Volume Up or Volume Down key press is detected.
+     * Triggers recording if 4 volume key presses (Up/Down) or 2 rapid Volume-Down presses are registered.
+     * Returns true if emergency trigger condition is met and handled.
      */
-    fun onVolumeDownPressed(context: Context): Boolean {
-        val currentTime = System.currentTimeMillis()
-        val interval = currentTime - lastVolumeDownTimestamp
-
-        if (interval in MIN_PRESS_INTERVAL_MS..DOUBLE_PRESS_WINDOW_MS) {
-            // Double press detected!
-            lastVolumeDownTimestamp = 0L // Reset to prevent consecutive triple triggers
-            Log.d(TAG, "Emergency double-press detected (interval: ${interval}ms)")
-            handleEmergencyTrigger(context.applicationContext)
-            return true
-        } else {
-            lastVolumeDownTimestamp = currentTime
+    @Synchronized
+    fun onVolumeKeyPressed(context: Context, keyCode: Int): Boolean {
+        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
             return false
         }
+
+        val currentTime = System.currentTimeMillis()
+
+        // Remove expired presses outside the multi-press window
+        pressHistory.removeAll { currentTime - it.timestamp > MULTI_PRESS_WINDOW_MS }
+
+        // Debounce hardware contact bounce for the exact same key
+        val lastPress = pressHistory.lastOrNull()
+        if (lastPress != null && lastPress.keyCode == keyCode && (currentTime - lastPress.timestamp) < MIN_DEBOUNCE_INTERVAL_MS) {
+            return false
+        }
+
+        pressHistory.add(KeyPressRecord(keyCode, currentTime))
+
+        val totalPressesInWindow = pressHistory.size
+        val hasBothKeys = pressHistory.any { it.keyCode == KeyEvent.KEYCODE_VOLUME_UP } &&
+                pressHistory.any { it.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN }
+
+        // Condition 1: 4 volume key presses (Volume Up and Down 4 times)
+        val is4PressTrigger = totalPressesInWindow >= REQUIRED_PRESS_COUNT
+
+        // Condition 2: 2 rapid Volume Down presses within 800ms
+        val recentDownPresses = pressHistory.filter { it.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN }
+        val isDoubleDownTrigger = recentDownPresses.size >= 2 &&
+                (currentTime - recentDownPresses[recentDownPresses.size - 2].timestamp) <= DOUBLE_DOWN_WINDOW_MS
+
+        if (is4PressTrigger || isDoubleDownTrigger) {
+            pressHistory.clear()
+            Log.d(TAG, "Emergency key trigger activated! totalPresses=$totalPressesInWindow, hasBothKeys=$hasBothKeys, is4Press=$is4PressTrigger, isDoubleDown=$isDoubleDownTrigger")
+            handleEmergencyTrigger(context.applicationContext)
+            return true
+        }
+
+        return false
+    }
+
+    /**
+     * Legacy helper for Volume Down only
+     */
+    fun onVolumeDownPressed(context: Context): Boolean {
+        return onVolumeKeyPressed(context, KeyEvent.KEYCODE_VOLUME_DOWN)
     }
 
     private fun handleEmergencyTrigger(context: Context) {
