@@ -10,6 +10,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import android.view.KeyEvent
+import com.example.camera.EmergencyKeyManager
 import com.example.ui.AppNavigation
 import com.example.ui.theme.MyApplicationTheme
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -48,5 +50,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            val handled = EmergencyKeyManager.onVolumeDownPressed(this)
+            if (handled) {
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 }
