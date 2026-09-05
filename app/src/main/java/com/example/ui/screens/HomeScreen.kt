@@ -49,10 +49,40 @@ fun HomeScreen(
     val isStarting = recordingState == RecordingState.STARTING
     val isStopping = recordingState == RecordingState.STOPPING || isProcessingDual
 
+    var isDualFrameView by remember { mutableStateOf(true) }
+
+    val onRecordToggle: () -> Unit = {
+        if (recordingState == RecordingState.IDLE) {
+            val intent = Intent(context, RecordingService::class.java).apply {
+                action = RecordingService.ACTION_START
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        } else {
+            val intent = Intent(context, RecordingService::class.java).apply {
+                action = RecordingService.ACTION_STOP
+            }
+            context.startService(intent)
+        }
+    }
+
     LaunchedEffect(Unit) {
         AppSettings.isDualFormatEnabled(context).collect { enabled ->
             RecordingManager.setDualFormatEnabled(enabled)
         }
+    }
+
+    if (isDualFrameView) {
+        DualFrameViewfinder(
+            onRecordToggle = onRecordToggle,
+            onNavigateToSettings = onNavigateToSettings,
+            onNavigateToRecordings = onNavigateToRecordings,
+            onToggleDashboardMode = { isDualFrameView = false }
+        )
+        return
     }
 
     // Pulse animation for recording state
@@ -86,6 +116,12 @@ fun HomeScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { isDualFrameView = true },
+                        modifier = Modifier.testTag("switch_to_dual_camera_button")
+                    ) {
+                        Icon(Icons.Default.FlipCameraAndroid, contentDescription = "Dual Frame Camera", tint = MaterialTheme.colorScheme.primary)
+                    }
                     IconButton(
                         onClick = onNavigateToSettings,
                         modifier = Modifier.testTag("settings_button")

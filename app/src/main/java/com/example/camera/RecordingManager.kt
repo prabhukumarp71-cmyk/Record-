@@ -47,6 +47,18 @@ object RecordingManager {
     private val _isProcessingDualFormat = MutableStateFlow(false)
     val isProcessingDualFormat: StateFlow<Boolean> = _isProcessingDualFormat
 
+    private val _isTorchOn = MutableStateFlow(false)
+    val isTorchOn: StateFlow<Boolean> = _isTorchOn
+
+    private val _zoomRatio = MutableStateFlow(1f)
+    val zoomRatio: StateFlow<Float> = _zoomRatio
+
+    private val _lensFacing = MutableStateFlow(CameraSelector.LENS_FACING_BACK)
+    val lensFacing: StateFlow<Int> = _lensFacing
+
+    private val _cropPosition = MutableStateFlow(0.5f) // 0.2 = top, 0.5 = center, 0.8 = bottom
+    val cropPosition: StateFlow<Float> = _cropPosition
+
     var previewUseCase: Preview? = null
         private set
 
@@ -207,6 +219,7 @@ object RecordingManager {
         } else {
             CameraSelector.LENS_FACING_BACK
         }
+        _lensFacing.value = currentLensFacing
         
         currentContext?.let { ctx ->
             currentLifecycleOwner?.let { owner ->
@@ -217,8 +230,26 @@ object RecordingManager {
 
     fun toggleTorch() {
         val currentCamera = camera ?: return
-        val isTorchOn = currentCamera.cameraInfo.torchState.value == androidx.camera.core.TorchState.ON
-        currentCamera.cameraControl.enableTorch(!isTorchOn)
+        if (!currentCamera.cameraInfo.hasFlashUnit()) return
+        val next = !_isTorchOn.value
+        currentCamera.cameraControl.enableTorch(next)
+        _isTorchOn.value = next
+    }
+
+    fun toggleZoom() {
+        val currentCamera = camera ?: return
+        val current = _zoomRatio.value
+        val next = if (current < 1.5f) 2.0f else 1.0f
+        currentCamera.cameraControl.setZoomRatio(next)
+        _zoomRatio.value = next
+    }
+
+    fun cycleCropPosition() {
+        _cropPosition.value = when (_cropPosition.value) {
+            0.5f -> 0.2f // Top
+            0.2f -> 0.8f // Bottom
+            else -> 0.5f // Center
+        }
     }
 
     @SuppressLint("MissingPermission")

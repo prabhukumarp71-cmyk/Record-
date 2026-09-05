@@ -116,7 +116,7 @@ fun RecordingsScreen(
                 FilterChip(
                     selected = selectedFilter == VideoFormatType.VERTICAL,
                     onClick = { selectedFilter = if (selectedFilter == VideoFormatType.VERTICAL) null else VideoFormatType.VERTICAL },
-                    label = { Text("📱 Vertical ($verticalCount)") },
+                    label = { Text("📱 9:16 Vertical ($verticalCount)") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                         selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -126,7 +126,7 @@ fun RecordingsScreen(
                 FilterChip(
                     selected = selectedFilter == VideoFormatType.HORIZONTAL,
                     onClick = { selectedFilter = if (selectedFilter == VideoFormatType.HORIZONTAL) null else VideoFormatType.HORIZONTAL },
-                    label = { Text("🖥️ Horizontal ($horizontalCount)") },
+                    label = { Text("🖥️ 16:9 Horizontal ($horizontalCount)") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
                         selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
