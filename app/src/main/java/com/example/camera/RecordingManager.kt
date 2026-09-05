@@ -114,6 +114,7 @@ object RecordingManager {
                     .build()
 
                 val cameraInfo = cameraProvider?.getCameraInfo(cameraSelector)
+                @Suppress("DEPRECATION")
                 val supportedQualities = cameraInfo?.let { QualitySelector.getSupportedQualities(it) } ?: emptyList()
 
                 val qualitySelector = if (supportedQualities.isNotEmpty()) {
