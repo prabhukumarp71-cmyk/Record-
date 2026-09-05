@@ -310,7 +310,8 @@ object RecordingManager {
                                 val companionUri = DualFormatVideoHelper.generateCompanionFormat(
                                     context = context.applicationContext,
                                     sourceUri = recordEvent.outputResults.outputUri,
-                                    originalDisplayName = "$name.mp4"
+                                    originalDisplayName = "$name.mp4",
+                                    cropPosition = _cropPosition.value
                                 )
                                 withContext(Dispatchers.Main) {
                                     _isProcessingDualFormat.value = false

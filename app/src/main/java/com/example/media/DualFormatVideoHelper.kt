@@ -2,23 +2,33 @@ package com.example.media
 
 import android.content.ContentValues
 import android.content.Context
-import android.media.MediaCodec
-import android.media.MediaExtractor
-import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
-import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
+import androidx.annotation.OptIn
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.Crop
+import androidx.media3.effect.Presentation
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.Effects
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.Transformer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.nio.ByteBuffer
+import kotlin.coroutines.resume
 
 enum class VideoFormatType(val label: String, val badge: String, val ratio: String) {
-    VERTICAL("Vertical", "📱 Vertical", "9:16"),
-    HORIZONTAL("Horizontal", "🖥️ Horizontal", "16:9"),
+    VERTICAL("Vertical", "📱 9:16 Vertical", "9:16"),
+    HORIZONTAL("Horizontal", "🖥️ 16:9 Horizontal", "16:9"),
     UNKNOWN("Standard", "🎬 Standard", "Auto")
 }
 
@@ -64,14 +74,17 @@ object DualFormatVideoHelper {
     }
 
     /**
-     * Given an existing video URI, creates the complementary format (Vertical <-> Horizontal)
-     * using MediaExtractor and MediaMuxer with orientation transformation.
-     * This operation performs lossless track copying without re-encoding, finishing in milliseconds.
+     * Given an existing video URI, creates a genuine complementary video format:
+     * - 9:16 Vertical -> Real 16:9 Horizontal widescreen crop (upright, correctly framed, no flipping)
+     * - 16:9 Horizontal -> Real 9:16 Vertical portrait crop
+     * Powered by hardware-accelerated Media3 Transformer.
      */
+    @OptIn(UnstableApi::class)
     suspend fun generateCompanionFormat(
         context: Context,
         sourceUri: Uri,
-        originalDisplayName: String
+        originalDisplayName: String,
+        cropPosition: Float = 0.5f
     ): Uri? = withContext(Dispatchers.IO) {
         val primaryFormat = detectVideoFormat(context, sourceUri, originalDisplayName)
         val targetFormat = if (primaryFormat == VideoFormatType.VERTICAL) {
@@ -80,82 +93,80 @@ object DualFormatVideoHelper {
             VideoFormatType.VERTICAL
         }
 
-        // Target orientation hint for MP4 header:
-        // 0 degrees = Horizontal (16:9 Landscape)
-        // 90 degrees = Vertical (9:16 Portrait)
-        val targetRotation = if (targetFormat == VideoFormatType.HORIZONTAL) 0 else 90
-
         val companionDisplayName = buildCompanionName(originalDisplayName, targetFormat)
+        Log.d(TAG, "Generating real companion format: primary=$primaryFormat, target=$targetFormat, name=$companionDisplayName")
 
-        Log.d(TAG, "Generating companion format: target=$targetFormat, rotation=$targetRotation, name=$companionDisplayName")
+        val tempFile = File(context.cacheDir, "real_dual_${System.currentTimeMillis()}.mp4")
 
-        val tempFile = File(context.cacheDir, "dual_format_${System.currentTimeMillis()}.mp4")
         try {
-            val extractor = MediaExtractor()
-            val afd = context.contentResolver.openAssetFileDescriptor(sourceUri, "r")
-            if (afd != null) {
-                afd.use { assetFd ->
-                    extractor.setDataSource(assetFd.fileDescriptor, assetFd.startOffset, assetFd.length)
+            val targetAspectRatio = if (targetFormat == VideoFormatType.HORIZONTAL) (16f / 9f) else (9f / 16f)
+
+            // Select transformation effects based on target format and user's crop framing
+            val effectsList = mutableListOf<androidx.media3.common.Effect>()
+            if (targetFormat == VideoFormatType.HORIZONTAL) {
+                if (cropPosition <= 0.3f) {
+                    // Top crop framing (shift window toward top of 9:16 frame)
+                    effectsList.add(Crop(-1f, 1f, 0.2f, 0.8328f))
+                    effectsList.add(Presentation.createForAspectRatio(16f / 9f, Presentation.LAYOUT_SCALE_TO_FIT))
+                } else if (cropPosition >= 0.7f) {
+                    // Bottom crop framing (shift window toward bottom of 9:16 frame)
+                    effectsList.add(Crop(-1f, 1f, -0.8328f, -0.2f))
+                    effectsList.add(Presentation.createForAspectRatio(16f / 9f, Presentation.LAYOUT_SCALE_TO_FIT))
+                } else {
+                    // Center crop framing
+                    effectsList.add(Presentation.createForAspectRatio(16f / 9f, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))
                 }
             } else {
-                val pfd = context.contentResolver.openFileDescriptor(sourceUri, "r") ?: return@withContext null
-                pfd.use { parcelFd ->
-                    extractor.setDataSource(parcelFd.fileDescriptor)
-                }
+                // Vertical crop from horizontal source
+                effectsList.add(Presentation.createForAspectRatio(9f / 16f, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))
             }
 
-            val muxer = MediaMuxer(tempFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            muxer.setOrientationHint(targetRotation)
+            val success = suspendCancellableCoroutine<Boolean> { continuation ->
+                val mainHandler = Handler(Looper.getMainLooper())
+                mainHandler.post {
+                    try {
+                        val mediaItem = MediaItem.fromUri(sourceUri)
+                        val editedMediaItem = EditedMediaItem.Builder(mediaItem)
+                            .setEffects(
+                                Effects(
+                                    /* audioProcessors = */ emptyList(),
+                                    /* videoEffects = */ effectsList
+                                )
+                            )
+                            .build()
 
-            val trackCount = extractor.trackCount
-            val trackIndexMap = HashMap<Int, Int>()
-            var maxBufferSize = 1024 * 1024 // 1MB fallback
+                        val transformer = Transformer.Builder(context)
+                            .addListener(object : Transformer.Listener {
+                                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                                    Log.d(TAG, "Media3 Transformation completed successfully: size=${exportResult.fileSizeBytes}")
+                                    if (continuation.isActive) continuation.resume(true)
+                                }
 
-            for (i in 0 until trackCount) {
-                val format = extractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-                if (mime.startsWith("video/") || mime.startsWith("audio/")) {
-                    extractor.selectTrack(i)
-                    val newTrackIndex = muxer.addTrack(format)
-                    trackIndexMap[i] = newTrackIndex
+                                override fun onError(
+                                    composition: Composition,
+                                    exportResult: ExportResult,
+                                    exportException: ExportException
+                                ) {
+                                    Log.e(TAG, "Media3 Transformation failed", exportException)
+                                    if (continuation.isActive) continuation.resume(false)
+                                }
+                            })
+                            .build()
 
-                    if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
-                        val size = format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
-                        if (size > maxBufferSize) {
-                            maxBufferSize = size
-                        }
+                        transformer.start(editedMediaItem, tempFile.absolutePath)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to initiate Media3 Transformer", e)
+                        if (continuation.isActive) continuation.resume(false)
                     }
                 }
             }
 
-            muxer.start()
-
-            val buffer = ByteBuffer.allocateDirect(maxBufferSize)
-            val bufferInfo = MediaCodec.BufferInfo()
-
-            while (true) {
-                val sampleTrackIndex = extractor.sampleTrackIndex
-                if (sampleTrackIndex < 0) break
-
-                val muxerTrackIndex = trackIndexMap[sampleTrackIndex]
-                if (muxerTrackIndex != null) {
-                    bufferInfo.offset = 0
-                    bufferInfo.size = extractor.readSampleData(buffer, 0)
-                    if (bufferInfo.size < 0) break
-
-                    bufferInfo.presentationTimeUs = extractor.sampleTime
-                    bufferInfo.flags = extractor.sampleFlags
-
-                    muxer.writeSampleData(muxerTrackIndex, buffer, bufferInfo)
-                }
-                extractor.advance()
+            if (!success || !tempFile.exists() || tempFile.length() == 0L) {
+                Log.e(TAG, "Companion generation was unsuccessful, output file missing or empty")
+                return@withContext null
             }
 
-            muxer.stop()
-            muxer.release()
-            extractor.release()
-
-            // Save the resulting file to MediaStore
+            // Save the real companion video file into MediaStore
             val contentValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, companionDisplayName)
                 put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
@@ -182,10 +193,10 @@ object DualFormatVideoHelper {
                 context.contentResolver.update(insertedUri, contentValues, null, null)
             }
 
-            Log.d(TAG, "Successfully created companion format: $insertedUri ($companionDisplayName)")
+            Log.d(TAG, "Successfully created real companion video: $insertedUri ($companionDisplayName)")
             insertedUri
         } catch (e: Exception) {
-            Log.e(TAG, "Error generating companion format", e)
+            Log.e(TAG, "Error generating real companion format", e)
             null
         } finally {
             if (tempFile.exists()) {

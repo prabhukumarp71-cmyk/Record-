@@ -87,6 +87,8 @@ dependencies {
   implementation(libs.androidx.camera.video)
   implementation(libs.androidx.media3.exoplayer)
   implementation(libs.androidx.media3.ui)
+  implementation(libs.androidx.media3.transformer)
+  implementation(libs.androidx.media3.effect)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.material3)
