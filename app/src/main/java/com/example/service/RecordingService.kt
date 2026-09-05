@@ -11,8 +11,12 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.lifecycleScope
 import com.example.MainActivity
 import com.example.camera.RecordingManager
+import com.example.settings.AppSettings
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class RecordingService : LifecycleService() {
 
@@ -44,35 +48,50 @@ class RecordingService : LifecycleService() {
     }
 
     private fun startRecording() {
-        val notification = createNotification("🔴 Recording video...")
-        
-        val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        } else {
-            0
-        }
+        lifecycleScope.launch {
+            val isDualFormat = AppSettings.isDualFormatEnabled(this@RecordingService).first()
+            val isAudio = AppSettings.isAudioEnabled(this@RecordingService).first()
+            RecordingManager.setDualFormatEnabled(isDualFormat)
 
-        try {
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceType)
-        } catch (e: Exception) {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-
-        val quality = androidx.camera.video.Quality.HIGHEST
-
-        RecordingManager.bindCamera(
-            context = this,
-            lifecycleOwner = this,
-            quality = quality,
-            onBound = {
-                RecordingManager.startRecording(this, audioEnabled = true)
+            val initialText = if (isDualFormat) {
+                "🔴 Recording video (Dual Format: Vertical & Horizontal)..."
+            } else {
+                "🔴 Recording video..."
             }
-        )
+
+            val notification = createNotification(initialText)
+            
+            val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            } else {
+                0
+            }
+
+            try {
+                ServiceCompat.startForeground(this@RecordingService, NOTIFICATION_ID, notification, serviceType)
+            } catch (e: Exception) {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+
+            val quality = androidx.camera.video.Quality.HIGHEST
+
+            RecordingManager.bindCamera(
+                context = this@RecordingService,
+                lifecycleOwner = this@RecordingService,
+                quality = quality,
+                onBound = {
+                    RecordingManager.startRecording(this@RecordingService, audioEnabled = isAudio)
+                }
+            )
+        }
     }
 
     private fun stopRecording() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, createNotification("💾 Finalizing Dual Formats (Vertical & Horizontal)..."))
+
         RecordingManager.stopRecording {
             try {
                 stopForeground(STOP_FOREGROUND_REMOVE)

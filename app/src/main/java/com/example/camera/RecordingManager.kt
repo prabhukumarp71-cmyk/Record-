@@ -18,8 +18,14 @@ import androidx.camera.video.*
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.example.model.RecordingState
+import com.example.media.DualFormatVideoHelper
+import android.widget.Toast
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -34,6 +40,12 @@ object RecordingManager {
 
     private val _nightModeEnabled = MutableStateFlow(false)
     val nightModeEnabled: StateFlow<Boolean> = _nightModeEnabled
+
+    private val _dualFormatEnabled = MutableStateFlow(true)
+    val dualFormatEnabled: StateFlow<Boolean> = _dualFormatEnabled
+
+    private val _isProcessingDualFormat = MutableStateFlow(false)
+    val isProcessingDualFormat: StateFlow<Boolean> = _isProcessingDualFormat
 
     var previewUseCase: Preview? = null
         private set
@@ -50,6 +62,15 @@ object RecordingManager {
     private var currentContext: Context? = null
     private var currentQuality: Quality = Quality.HIGHEST
     private var onFinalizeCallback: ((VideoRecordEvent.Finalize?) -> Unit)? = null
+    private var currentRecordingDisplayName: String = ""
+
+    fun toggleDualFormat() {
+        _dualFormatEnabled.value = !_dualFormatEnabled.value
+    }
+
+    fun setDualFormatEnabled(enabled: Boolean) {
+        _dualFormatEnabled.value = enabled
+    }
 
     fun setSurfaceProvider(surfaceProvider: Preview.SurfaceProvider?) {
         currentSurfaceProvider = surfaceProvider
@@ -208,7 +229,11 @@ object RecordingManager {
             Log.e(TAG, "VideoCapture is null when starting recording")
             return
         }
-        val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
+        val isDual = _dualFormatEnabled.value
+        val baseName = "VID_$timestamp"
+        val name = if (isDual) "${baseName}_Vertical" else baseName
+        currentRecordingDisplayName = name
         
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
@@ -246,13 +271,46 @@ object RecordingManager {
                     _recordingDurationMs.value = recordEvent.recordingStats.recordedDurationNanos / 1000000L
                 }
                 is VideoRecordEvent.Finalize -> {
-                    _recordingState.value = RecordingState.IDLE
-                    _recordingDurationMs.value = 0L
-                    if (recordEvent.hasError()) {
-                        Log.w(TAG, "Video capture finalized with code: ${recordEvent.error}")
+                    if (!recordEvent.hasError() && recordEvent.outputResults.outputUri != android.net.Uri.EMPTY && isDual) {
+                        _recordingState.value = RecordingState.STOPPING
+                        _isProcessingDualFormat.value = true
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val companionUri = DualFormatVideoHelper.generateCompanionFormat(
+                                    context = context.applicationContext,
+                                    sourceUri = recordEvent.outputResults.outputUri,
+                                    originalDisplayName = "$name.mp4"
+                                )
+                                withContext(Dispatchers.Main) {
+                                    _isProcessingDualFormat.value = false
+                                    _recordingState.value = RecordingState.IDLE
+                                    _recordingDurationMs.value = 0L
+                                    if (companionUri != null) {
+                                        Toast.makeText(context, "✅ Recorded in both Vertical & Horizontal formats!", Toast.LENGTH_SHORT).show()
+                                    }
+                                    onFinalizeCallback?.invoke(recordEvent)
+                                    onFinalizeCallback = null
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed dual format generation", e)
+                                withContext(Dispatchers.Main) {
+                                    _isProcessingDualFormat.value = false
+                                    _recordingState.value = RecordingState.IDLE
+                                    _recordingDurationMs.value = 0L
+                                    onFinalizeCallback?.invoke(recordEvent)
+                                    onFinalizeCallback = null
+                                }
+                            }
+                        }
+                    } else {
+                        _recordingState.value = RecordingState.IDLE
+                        _recordingDurationMs.value = 0L
+                        if (recordEvent.hasError()) {
+                            Log.w(TAG, "Video capture finalized with code: ${recordEvent.error}")
+                        }
+                        onFinalizeCallback?.invoke(recordEvent)
+                        onFinalizeCallback = null
                     }
-                    onFinalizeCallback?.invoke(recordEvent)
-                    onFinalizeCallback = null
                 }
             }
         }

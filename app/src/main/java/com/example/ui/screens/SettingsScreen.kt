@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.camera.EmergencyKeyManager
+import com.example.camera.RecordingManager
 import com.example.settings.AppSettings
 import kotlinx.coroutines.launch
 
@@ -33,6 +34,7 @@ fun SettingsScreen(
 
     val quality by AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
     val audioEnabled by AppSettings.isAudioEnabled(context).collectAsState(initial = true)
+    val dualFormatEnabled by AppSettings.isDualFormatEnabled(context).collectAsState(initial = true)
 
     var isAccessibilityEnabled by remember {
         mutableStateOf(EmergencyKeyManager.isAccessibilityServiceEnabled(context))
@@ -151,6 +153,91 @@ fun SettingsScreen(
                         Icon(Icons.Default.Vibration, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Test Emergency Vibration Pattern")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Simultaneous Dual-Format Recording Card
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                ),
+                shape = MaterialTheme.shapes.large,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Icon(
+                                Icons.Default.Layers,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    "Simultaneous Dual Formats",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    "Vertical (9:16) & Horizontal (16:9)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = dualFormatEnabled,
+                            onCheckedChange = { isEnabled ->
+                                coroutineScope.launch {
+                                    AppSettings.setDualFormatEnabled(context, isEnabled)
+                                    RecordingManager.setDualFormatEnabled(isEnabled)
+                                }
+                            },
+                            modifier = Modifier.testTag("dual_format_settings_switch")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "When enabled, every background recording produces both Vertical (9:16 portrait) and Horizontal (16:9 landscape) video files simultaneously.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.PhoneAndroid, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Vertical (9:16)", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                            }
+                            Text("Mobile feeds, Shorts, Reels & Stories", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Tv, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Horizontal (16:9)", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                            }
+                            Text("Widescreen, Desktop, TV & YouTube", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                        }
                     }
                 }
             }

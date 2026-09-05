@@ -26,9 +26,10 @@ fun AppNavigation() {
         composable("recordings") {
             RecordingsScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToPlayer = { uri ->
-                    val encoded = Uri.encode(uri)
-                    navController.navigate("player/$encoded")
+                onNavigateToPlayer = { uri, companion ->
+                    val encodedUri = Uri.encode(uri)
+                    val encodedCompanion = if (companion != null) Uri.encode(companion) else "none"
+                    navController.navigate("player/$encodedUri/$encodedCompanion")
                 }
             )
         }
@@ -38,12 +39,19 @@ fun AppNavigation() {
             )
         }
         composable(
-            "player/{uri}",
-            arguments = listOf(navArgument("uri") { type = NavType.StringType })
+            "player/{uri}/{companion}",
+            arguments = listOf(
+                navArgument("uri") { type = NavType.StringType },
+                navArgument("companion") { type = NavType.StringType }
+            )
         ) { backStackEntry ->
             val uri = Uri.decode(backStackEntry.arguments?.getString("uri"))
+            val companionArg = backStackEntry.arguments?.getString("companion")
+            val companion = if (companionArg != null && companionArg != "none") Uri.decode(companionArg) else null
+
             VideoPlayerScreen(
                 videoUriStr = uri,
+                companionUriStr = companion,
                 onNavigateBack = { navController.popBackStack() }
             )
         }

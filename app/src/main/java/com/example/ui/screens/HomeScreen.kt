@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.sp
 import com.example.camera.RecordingManager
 import com.example.model.RecordingState
 import com.example.service.RecordingService
+import com.example.settings.AppSettings
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -36,13 +38,22 @@ fun HomeScreen(
     onNavigateToSettings: () -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val recordingState by RecordingManager.recordingState.collectAsState()
     val duration by RecordingManager.recordingDurationMs.collectAsState()
     val isNightMode by RecordingManager.nightModeEnabled.collectAsState()
+    val isDualFormat by RecordingManager.dualFormatEnabled.collectAsState()
+    val isProcessingDual by RecordingManager.isProcessingDualFormat.collectAsState()
     val isRecording = recordingState == RecordingState.RECORDING
     val isPaused = recordingState == RecordingState.PAUSED
     val isStarting = recordingState == RecordingState.STARTING
-    val isStopping = recordingState == RecordingState.STOPPING
+    val isStopping = recordingState == RecordingState.STOPPING || isProcessingDual
+
+    LaunchedEffect(Unit) {
+        AppSettings.isDualFormatEnabled(context).collect { enabled ->
+            RecordingManager.setDualFormatEnabled(enabled)
+        }
+    }
 
     // Pulse animation for recording state
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -134,10 +145,11 @@ fun HomeScreen(
                         Text(
                             text = when {
                                 isStarting -> "Starting..."
+                                isProcessingDual -> "Saving dual formats..."
                                 isStopping -> "Saving recording..."
-                                isRecording -> "Recording in background"
+                                isRecording -> if (isDualFormat) "Recording Dual Formats" else "Recording in background"
                                 isPaused -> "Recording paused"
-                                else -> "Ready to record"
+                                else -> if (isDualFormat) "Ready (Dual: Vertical & Horizontal)" else "Ready to record"
                             },
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = when {
@@ -161,6 +173,85 @@ fun HomeScreen(
                             color = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
                         )
                     }
+                }
+            }
+
+            // Dual Format Simultaneous Recording Toggle Card
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (isDualFormat) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .clickable(enabled = !isRecording && !isPaused && !isStarting && !isStopping) {
+                        val next = !isDualFormat
+                        RecordingManager.setDualFormatEnabled(next)
+                        coroutineScope.launch {
+                            AppSettings.setDualFormatEnabled(context, next)
+                        }
+                    }
+                    .testTag("dual_format_card")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.Layers,
+                            contentDescription = null,
+                            tint = if (isDualFormat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Dual-Format Recording",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = if (isDualFormat) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (isDualFormat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                                ) {
+                                    Text(
+                                        text = if (isDualFormat) "9:16 + 16:9" else "Single",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                        color = if (isDualFormat) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = if (isDualFormat) "Simultaneously saves Vertical & Horizontal videos" else "Standard single format only",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isDualFormat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = isDualFormat,
+                        enabled = !isRecording && !isPaused && !isStarting && !isStopping,
+                        onCheckedChange = { next ->
+                            RecordingManager.setDualFormatEnabled(next)
+                            coroutineScope.launch {
+                                AppSettings.setDualFormatEnabled(context, next)
+                            }
+                        },
+                        modifier = Modifier
+                            .scale(0.85f)
+                            .testTag("dual_format_switch")
+                    )
                 }
             }
 

@@ -11,12 +11,14 @@ data class VideoMedia(
     val name: String,
     val duration: Long,
     val size: Long,
-    val dateAdded: Long
+    val dateAdded: Long,
+    val formatType: VideoFormatType = VideoFormatType.UNKNOWN,
+    val companionUri: android.net.Uri? = null
 )
 
 object MediaStoreHelper {
     suspend fun getVideos(context: Context): List<VideoMedia> = withContext(Dispatchers.IO) {
-        val videos = mutableListOf<VideoMedia>()
+        val rawVideos = mutableListOf<VideoMedia>()
         val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(
             MediaStore.Video.Media._ID,
@@ -27,8 +29,6 @@ object MediaStoreHelper {
             MediaStore.Video.Media.RELATIVE_PATH
         )
         
-        // We can filter by relative path, but for simplicity let's just query all and filter if needed.
-        // Actually, let's filter by our folder: Movies/BackgroundRecorder
         val selection = "${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?"
         val selectionArgs = arrayOf("%Movies/BackgroundRecorder%")
         val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
@@ -53,10 +53,37 @@ object MediaStoreHelper {
                 val size = cursor.getLong(sizeColumn)
                 val date = cursor.getLong(dateColumn)
                 val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                val format = DualFormatVideoHelper.detectVideoFormat(context, uri, name)
 
-                videos.add(VideoMedia(uri, name, duration, size, date))
+                rawVideos.add(
+                    VideoMedia(
+                        uri = uri,
+                        name = name,
+                        duration = duration,
+                        size = size,
+                        dateAdded = date,
+                        formatType = format
+                    )
+                )
             }
         }
-        videos
+
+        // Group by base name to link companion video pairs (Vertical <-> Horizontal)
+        val baseGroups = rawVideos.groupBy { DualFormatVideoHelper.getCleanBaseName(it.name) }
+        
+        val finalVideos = rawVideos.map { item ->
+            val cleanBase = DualFormatVideoHelper.getCleanBaseName(item.name)
+            val group = baseGroups[cleanBase] ?: emptyList()
+            val companion = group.firstOrNull { other ->
+                other.uri != item.uri && other.formatType != item.formatType
+            }
+            if (companion != null) {
+                item.copy(companionUri = companion.uri)
+            } else {
+                item
+            }
+        }
+
+        finalVideos
     }
 }

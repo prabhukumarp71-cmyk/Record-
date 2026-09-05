@@ -18,6 +18,19 @@ object AppSettings {
     val KEY_CAMERA_LENS = intPreferencesKey("camera_lens")
     val KEY_AUDIO_ENABLED = booleanPreferencesKey("audio_enabled")
     val KEY_FLASH_MODE = intPreferencesKey("flash_mode")
+    val KEY_DUAL_FORMAT_ENABLED = booleanPreferencesKey("dual_format_enabled")
+
+    fun isDualFormatEnabled(context: Context): Flow<Boolean> {
+        return context.dataStore.data.map { prefs ->
+            prefs[KEY_DUAL_FORMAT_ENABLED] ?: true
+        }
+    }
+
+    suspend fun setDualFormatEnabled(context: Context, enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_DUAL_FORMAT_ENABLED] = enabled
+        }
+    }
 
     fun getVideoQuality(context: Context): Flow<String> {
         return context.dataStore.data.map { prefs ->
