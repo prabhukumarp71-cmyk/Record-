@@ -148,8 +148,11 @@ fun DualFrameViewfinder(
     var mirrorViewRef by remember { mutableStateOf<MirrorFrameView?>(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
-    LaunchedEffect(recordingState, lifecycleOwner) {
+    val targetFps by com.example.settings.AppSettings.getTargetFps(context).collectAsState(initial = 30)
+
+    LaunchedEffect(recordingState, lifecycleOwner, targetFps) {
         if (recordingState == RecordingState.IDLE) {
+            RecordingManager.setTargetFps(targetFps)
             RecordingManager.bindCamera(
                 context = context,
                 lifecycleOwner = lifecycleOwner

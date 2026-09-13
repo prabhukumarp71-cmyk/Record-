@@ -5,10 +5,12 @@ import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.provider.MediaStore
 import android.util.Log
 import android.util.Range
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraSelector
@@ -58,6 +60,12 @@ object RecordingManager {
 
     private val _cropPosition = MutableStateFlow(0.5f) // 0.2 = top, 0.5 = center, 0.8 = bottom
     val cropPosition: StateFlow<Float> = _cropPosition
+
+    private val _targetFps = MutableStateFlow(30)
+    val targetFps: StateFlow<Int> = _targetFps
+
+    private val _supportedFpsRanges = MutableStateFlow<List<Int>>(listOf(30))
+    val supportedFpsRanges: StateFlow<List<Int>> = _supportedFpsRanges
 
     var previewUseCase: Preview? = null
         private set
@@ -114,6 +122,24 @@ object RecordingManager {
                     .build()
 
                 val cameraInfo = cameraProvider?.getCameraInfo(cameraSelector)
+                cameraInfo?.let { info ->
+                    try {
+                        val camera2Info = Camera2CameraInfo.from(info)
+                        val fpsRanges = camera2Info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                        val upperBounds = fpsRanges?.map { it.upper }?.distinct()?.sorted() ?: emptyList()
+                        val validOptions = upperBounds.filter { it in listOf(24, 30, 60, 120) }.toMutableList()
+                        
+                        // Force add 60 and 30 if they are missing so UI always has them, letting CameraX attempt best-effort
+                        if (!validOptions.contains(30)) validOptions.add(30)
+                        if (!validOptions.contains(60)) validOptions.add(60)
+                        
+                        _supportedFpsRanges.value = validOptions.sorted()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error querying FPS ranges", e)
+                        _supportedFpsRanges.value = listOf(30, 60)
+                    }
+                }
+
                 @Suppress("DEPRECATION")
                 val supportedQualities = cameraInfo?.let { QualitySelector.getSupportedQualities(it) } ?: emptyList()
 
@@ -129,10 +155,10 @@ object RecordingManager {
                     .build()
 
                 val videoCaptureBuilder = VideoCapture.Builder(recorder)
+                val camera2Extender = Camera2Interop.Extender(videoCaptureBuilder)
 
                 // Configure low-light optimizations tailored to hardware limitations (Moto Edge 50 Fusion Sony LYT-700C / Snapdragon 7s Gen 2 sensor)
                 if (_nightModeEnabled.value) {
-                    val camera2Extender = Camera2Interop.Extender(videoCaptureBuilder)
                     // Enable Night Mode scene if supported or low-light boost
                     camera2Extender.setCaptureRequestOption(
                         CaptureRequest.CONTROL_SCENE_MODE,
@@ -151,6 +177,31 @@ object RecordingManager {
                         CaptureRequest.CONTROL_AE_LOCK,
                         false
                     )
+                } else {
+                    val fps = _targetFps.value
+                    cameraInfo?.let { info ->
+                        try {
+                            val camera2Info = Camera2CameraInfo.from(info)
+                            val ranges = camera2Info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                            var targetRange = ranges?.filter { it.upper == fps }?.sortedByDescending { it.lower }?.firstOrNull()
+                            
+                            // If exact match not found in reported ranges, force a standard range like [60, 60] or [30, 30]
+                            if (targetRange == null) {
+                                targetRange = Range(if (fps == 60) 30 else fps, fps)
+                            }
+                            
+                            camera2Extender.setCaptureRequestOption(
+                                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                                targetRange
+                            )
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error setting FPS range", e)
+                            camera2Extender.setCaptureRequestOption(
+                                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                                Range(if (fps == 60) 30 else fps, fps)
+                            )
+                        }
+                    }
                 }
 
                 videoCapture = videoCaptureBuilder.build()
@@ -243,6 +294,10 @@ object RecordingManager {
         val next = if (current < 1.5f) 2.0f else 1.0f
         currentCamera.cameraControl.setZoomRatio(next)
         _zoomRatio.value = next
+    }
+
+    fun setTargetFps(fps: Int) {
+        _targetFps.value = fps
     }
 
     fun cycleCropPosition() {

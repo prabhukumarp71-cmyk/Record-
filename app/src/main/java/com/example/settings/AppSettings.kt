@@ -19,6 +19,19 @@ object AppSettings {
     val KEY_AUDIO_ENABLED = booleanPreferencesKey("audio_enabled")
     val KEY_FLASH_MODE = intPreferencesKey("flash_mode")
     val KEY_DUAL_FORMAT_ENABLED = booleanPreferencesKey("dual_format_enabled")
+    val KEY_TARGET_FPS = intPreferencesKey("target_fps")
+
+    fun getTargetFps(context: Context): Flow<Int> {
+        return context.dataStore.data.map { prefs ->
+            prefs[KEY_TARGET_FPS] ?: 30
+        }
+    }
+
+    suspend fun setTargetFps(context: Context, fps: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TARGET_FPS] = fps
+        }
+    }
 
     fun isDualFormatEnabled(context: Context): Flow<Boolean> {
         return context.dataStore.data.map { prefs ->

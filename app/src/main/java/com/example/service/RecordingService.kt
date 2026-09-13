@@ -51,6 +51,8 @@ class RecordingService : LifecycleService() {
         lifecycleScope.launch {
             val isDualFormat = AppSettings.isDualFormatEnabled(this@RecordingService).first()
             val isAudio = AppSettings.isAudioEnabled(this@RecordingService).first()
+            val targetFps = AppSettings.getTargetFps(this@RecordingService).first()
+            RecordingManager.setTargetFps(targetFps)
             RecordingManager.setDualFormatEnabled(isDualFormat)
 
             val initialText = if (isDualFormat) {

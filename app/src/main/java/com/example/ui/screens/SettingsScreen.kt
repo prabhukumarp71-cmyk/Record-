@@ -258,6 +258,31 @@ fun SettingsScreen(
                 }
             }
 
+            val targetFps by AppSettings.getTargetFps(context).collectAsState(initial = 30)
+            val supportedFpsRanges by RecordingManager.supportedFpsRanges.collectAsState()
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Text("Frame Rate (FPS)", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (supportedFpsRanges.isEmpty()) {
+                    Text("Loading options...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                } else {
+                    supportedFpsRanges.forEach { fps ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 8.dp)) {
+                            RadioButton(
+                                selected = targetFps == fps,
+                                onClick = { 
+                                    coroutineScope.launch { AppSettings.setTargetFps(context, fps) }
+                                    RecordingManager.setTargetFps(fps) 
+                                }
+                            )
+                            Text("$fps FPS")
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
