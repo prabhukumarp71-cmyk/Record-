@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Background Recorder"
+rootProject.name = "IT"
 
 include(":app")

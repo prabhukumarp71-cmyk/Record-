@@ -183,23 +183,18 @@ object RecordingManager {
                         try {
                             val camera2Info = Camera2CameraInfo.from(info)
                             val ranges = camera2Info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-                            var targetRange = ranges?.filter { it.upper == fps }?.sortedByDescending { it.lower }?.firstOrNull()
+                            val targetRange = ranges?.filter { it.upper == fps }?.sortedByDescending { it.lower }?.firstOrNull()
                             
-                            // If exact match not found in reported ranges, force a standard range like [60, 60] or [30, 30]
-                            if (targetRange == null) {
-                                targetRange = Range(if (fps == 60) 30 else fps, fps)
+                            if (targetRange != null) {
+                                camera2Extender.setCaptureRequestOption(
+                                    CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                                    targetRange
+                                )
+                            } else {
+                                Log.w(TAG, "Requested FPS $fps not officially supported by hardware, letting CameraX decide optimal framerate.")
                             }
-                            
-                            camera2Extender.setCaptureRequestOption(
-                                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                                targetRange
-                            )
                         } catch (e: Exception) {
                             Log.e(TAG, "Error setting FPS range", e)
-                            camera2Extender.setCaptureRequestOption(
-                                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                                Range(if (fps == 60) 30 else fps, fps)
-                            )
                         }
                     }
                 }

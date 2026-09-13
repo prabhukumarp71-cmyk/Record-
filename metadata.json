@@ -1,5 +1,5 @@
 {
-  "name": "Background Recorder",
+  "name": "IT",
   "description": "A production-ready Android video recording application that records video continuously in the background.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
