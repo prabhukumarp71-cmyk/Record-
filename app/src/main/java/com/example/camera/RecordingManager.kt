@@ -177,6 +177,16 @@ object RecordingManager {
                         CaptureRequest.CONTROL_MODE,
                         CaptureRequest.CONTROL_MODE_USE_SCENE_MODE
                     )
+                    // Add High Quality Noise Reduction (matches photo processing)
+                    camera2Extender.setCaptureRequestOption(
+                        CaptureRequest.NOISE_REDUCTION_MODE,
+                        CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY
+                    )
+                    // Add High Quality Tone Mapping
+                    camera2Extender.setCaptureRequestOption(
+                        CaptureRequest.TONEMAP_MODE,
+                        CaptureRequest.TONEMAP_MODE_HIGH_QUALITY
+                    )
                     // Extend exposure frame rate range for higher light accumulation without hardware stalling
                     camera2Extender.setCaptureRequestOption(
                         CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
@@ -266,6 +276,15 @@ object RecordingManager {
 
     fun setExposureMode(mode: Int) {
         _exposureMode.value = mode
+        if (_nightModeEnabled.value) {
+            _nightModeEnabled.value = false
+            val ctx = currentContext
+            val lifecycleOwner = currentLifecycleOwner
+            if (ctx != null && lifecycleOwner != null && _recordingState.value == RecordingState.IDLE) {
+                bindCamera(ctx, lifecycleOwner, currentLensFacing, currentQuality)
+                return
+            }
+        }
         applyExposure()
     }
 
@@ -305,6 +324,9 @@ object RecordingManager {
 
     fun toggleNightMode() {
         _nightModeEnabled.value = !_nightModeEnabled.value
+        if (_nightModeEnabled.value) {
+            _exposureMode.value = 0
+        }
         val ctx = currentContext
         val lifecycleOwner = currentLifecycleOwner
         if (ctx != null && lifecycleOwner != null && _recordingState.value == RecordingState.IDLE) {

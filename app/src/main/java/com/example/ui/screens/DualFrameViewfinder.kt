@@ -144,6 +144,7 @@ fun DualFrameViewfinder(
     val isFocusLocked by RecordingManager.isFocusLocked.collectAsState()
     val exposureMode by RecordingManager.exposureMode.collectAsState()
     val exposureCompensation by RecordingManager.exposureCompensation.collectAsState()
+    val isNightModeEnabled by RecordingManager.nightModeEnabled.collectAsState()
 
     val isRecording = recordingState == RecordingState.RECORDING
     val isPaused = recordingState == RecordingState.PAUSED
@@ -496,22 +497,31 @@ fun DualFrameViewfinder(
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF222222)),
                 ) {
                     Text(
+                        text = "NIGHT",
+                        modifier = Modifier
+                            .clickable { RecordingManager.toggleNightMode() }
+                            .background(if (isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (isNightModeEnabled) Color.Black else Color.White
+                    )
+                    Text(
                         text = "AUTO EV",
                         modifier = Modifier
                             .clickable { RecordingManager.setExposureMode(0) }
-                            .background(if (exposureMode == 0) Color(0xFFFFD54F) else Color.Transparent)
+                            .background(if (exposureMode == 0 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = if (exposureMode == 0) Color.Black else Color.White
+                        color = if (exposureMode == 0 && !isNightModeEnabled) Color.Black else Color.White
                     )
                     Text(
                         text = "MANUAL",
                         modifier = Modifier
                             .clickable { RecordingManager.setExposureMode(1) }
-                            .background(if (exposureMode == 1) Color(0xFFFFD54F) else Color.Transparent)
+                            .background(if (exposureMode == 1 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = if (exposureMode == 1) Color.Black else Color.White
+                        color = if (exposureMode == 1 && !isNightModeEnabled) Color.Black else Color.White
                     )
                 }
             }
