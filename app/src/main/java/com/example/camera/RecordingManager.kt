@@ -43,6 +43,15 @@ object RecordingManager {
     private val _nightModeEnabled = MutableStateFlow(false)
     val nightModeEnabled: StateFlow<Boolean> = _nightModeEnabled
 
+    private val _exposureMode = MutableStateFlow(0) // 0 = Auto, 1 = Manual
+    val exposureMode: StateFlow<Int> = _exposureMode
+
+    private val _exposureCompensation = MutableStateFlow(0f) // -1.0 to 1.0
+    val exposureCompensation: StateFlow<Float> = _exposureCompensation
+
+    private val _isFocusLocked = MutableStateFlow(false)
+    val isFocusLocked: StateFlow<Boolean> = _isFocusLocked
+
     private val _dualFormatEnabled = MutableStateFlow(true)
     val dualFormatEnabled: StateFlow<Boolean> = _dualFormatEnabled
 
@@ -219,7 +228,7 @@ object RecordingManager {
                 )
 
                 // Apply exposure compensation boost if night mode is enabled
-                applyNightModeExposure()
+                applyExposure()
 
                 onBound?.invoke()
             } catch (e: Exception) {
@@ -229,11 +238,19 @@ object RecordingManager {
         }, ContextCompat.getMainExecutor(context))
     }
 
-    private fun applyNightModeExposure() {
+    private fun applyExposure() {
         val currentCam = camera ?: return
         val exposureState = currentCam.cameraInfo.exposureState
         if (exposureState.isExposureCompensationSupported) {
-            val targetCompensation = if (_nightModeEnabled.value) {
+            val targetCompensation = if (_exposureMode.value == 1) { // Manual Mode
+                val range = exposureState.exposureCompensationRange
+                val ev = _exposureCompensation.value
+                if (ev < 0) {
+                    (ev * -range.lower).toInt().coerceAtLeast(range.lower)
+                } else {
+                    (ev * range.upper).toInt().coerceAtMost(range.upper)
+                }
+            } else if (_nightModeEnabled.value) { // Auto Mode + Night Mode
                 val range = exposureState.exposureCompensationRange
                 (range.upper * 0.75f).toInt().coerceIn(range.lower, range.upper)
             } else {
@@ -247,6 +264,45 @@ object RecordingManager {
         }
     }
 
+    fun setExposureMode(mode: Int) {
+        _exposureMode.value = mode
+        applyExposure()
+    }
+
+    fun setExposureCompensation(normalizedValue: Float) {
+        _exposureCompensation.value = normalizedValue.coerceIn(-1f, 1f)
+        if (_exposureMode.value == 1) {
+            applyExposure()
+        }
+    }
+
+    fun toggleFocusLock() {
+        val currentCam = camera ?: return
+        _isFocusLocked.value = !_isFocusLocked.value
+        
+        if (_isFocusLocked.value) {
+            val factory = androidx.camera.core.SurfaceOrientedMeteringPointFactory(1f, 1f)
+            val center = factory.createPoint(0.5f, 0.5f)
+            val action = androidx.camera.core.FocusMeteringAction.Builder(center, androidx.camera.core.FocusMeteringAction.FLAG_AF)
+                .disableAutoCancel()
+                .build()
+            currentCam.cameraControl.startFocusAndMetering(action)
+        } else {
+            currentCam.cameraControl.cancelFocusAndMetering()
+        }
+    }
+
+    fun focusAtPoint(x: Float, y: Float) {
+        val currentCam = camera ?: return
+        val factory = androidx.camera.core.SurfaceOrientedMeteringPointFactory(1f, 1f)
+        val point = factory.createPoint(x, y)
+        val action = androidx.camera.core.FocusMeteringAction.Builder(point, androidx.camera.core.FocusMeteringAction.FLAG_AF or androidx.camera.core.FocusMeteringAction.FLAG_AE)
+            .disableAutoCancel()
+            .build()
+        currentCam.cameraControl.startFocusAndMetering(action)
+        _isFocusLocked.value = true
+    }
+
     fun toggleNightMode() {
         _nightModeEnabled.value = !_nightModeEnabled.value
         val ctx = currentContext
@@ -254,7 +310,7 @@ object RecordingManager {
         if (ctx != null && lifecycleOwner != null && _recordingState.value == RecordingState.IDLE) {
             bindCamera(ctx, lifecycleOwner, currentLensFacing, currentQuality)
         } else {
-            applyNightModeExposure()
+            applyExposure()
         }
     }
 

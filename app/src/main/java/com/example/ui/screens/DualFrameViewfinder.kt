@@ -31,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
@@ -139,6 +141,9 @@ fun DualFrameViewfinder(
     val cropPos by RecordingManager.cropPosition.collectAsState()
     val isDualFormat by RecordingManager.dualFormatEnabled.collectAsState()
     val isProcessingDual by RecordingManager.isProcessingDualFormat.collectAsState()
+    val isFocusLocked by RecordingManager.isFocusLocked.collectAsState()
+    val exposureMode by RecordingManager.exposureMode.collectAsState()
+    val exposureCompensation by RecordingManager.exposureCompensation.collectAsState()
 
     val isRecording = recordingState == RecordingState.RECORDING
     val isPaused = recordingState == RecordingState.PAUSED
@@ -294,7 +299,14 @@ fun DualFrameViewfinder(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .border(1.dp, Color(0xFF333333), RoundedCornerShape(12.dp))
-                    .background(Color(0xFF121212)),
+                    .background(Color(0xFF121212))
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            val x = offset.x / size.width.toFloat()
+                            val y = offset.y / size.height.toFloat()
+                            RecordingManager.focusAtPoint(x, y)
+                        }
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 // CameraX PreviewView (9:16 native portrait)
@@ -458,6 +470,63 @@ fun DualFrameViewfinder(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(bottom = 10.dp, end = 12.dp)
+                )
+            }
+        }
+        
+        // EXPOSURE CONTROLS
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = if (isFocusLocked) "FOCUS: LOCKED (Tap to Auto)" else "FOCUS: AUTO",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = if (isFocusLocked) Color(0xFFFFD54F) else Color.White,
+                    modifier = Modifier.clickable { RecordingManager.toggleFocusLock() }
+                )
+                
+                Row(
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF222222)),
+                ) {
+                    Text(
+                        text = "AUTO EV",
+                        modifier = Modifier
+                            .clickable { RecordingManager.setExposureMode(0) }
+                            .background(if (exposureMode == 0) Color(0xFFFFD54F) else Color.Transparent)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (exposureMode == 0) Color.Black else Color.White
+                    )
+                    Text(
+                        text = "MANUAL",
+                        modifier = Modifier
+                            .clickable { RecordingManager.setExposureMode(1) }
+                            .background(if (exposureMode == 1) Color(0xFFFFD54F) else Color.Transparent)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (exposureMode == 1) Color.Black else Color.White
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = exposureMode == 1) {
+                Slider(
+                    value = exposureCompensation,
+                    onValueChange = { RecordingManager.setExposureCompensation(it) },
+                    valueRange = -1f..1f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFFFFD54F),
+                        activeTrackColor = Color(0xFFFFD54F),
+                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                    ),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                 )
             }
         }
