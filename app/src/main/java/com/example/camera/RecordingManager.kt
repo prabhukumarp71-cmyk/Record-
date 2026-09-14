@@ -152,12 +152,10 @@ object RecordingManager {
                 @Suppress("DEPRECATION")
                 val supportedQualities = cameraInfo?.let { QualitySelector.getSupportedQualities(it) } ?: emptyList()
 
-                val qualitySelector = if (supportedQualities.isNotEmpty()) {
-                    val targetQuality = if (supportedQualities.contains(quality)) quality else supportedQualities.first()
-                    QualitySelector.from(targetQuality, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))
-                } else {
-                    QualitySelector.from(Quality.LOWEST)
-                }
+                val qualitySelector = QualitySelector.from(
+                    quality,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                )
 
                 val recorder = Recorder.Builder()
                     .setQualitySelector(qualitySelector)
@@ -168,15 +166,6 @@ object RecordingManager {
 
                 // Configure low-light optimizations tailored to hardware limitations (Moto Edge 50 Fusion Sony LYT-700C / Snapdragon 7s Gen 2 sensor)
                 if (_nightModeEnabled.value) {
-                    // Enable Night Mode scene if supported or low-light boost
-                    camera2Extender.setCaptureRequestOption(
-                        CaptureRequest.CONTROL_SCENE_MODE,
-                        CaptureRequest.CONTROL_SCENE_MODE_NIGHT
-                    )
-                    camera2Extender.setCaptureRequestOption(
-                        CaptureRequest.CONTROL_MODE,
-                        CaptureRequest.CONTROL_MODE_USE_SCENE_MODE
-                    )
                     // Add High Quality Noise Reduction (matches photo processing)
                     camera2Extender.setCaptureRequestOption(
                         CaptureRequest.NOISE_REDUCTION_MODE,
