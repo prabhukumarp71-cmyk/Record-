@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
@@ -145,6 +146,11 @@ fun DualFrameViewfinder(
     val exposureMode by RecordingManager.exposureMode.collectAsState()
     val exposureCompensation by RecordingManager.exposureCompensation.collectAsState()
     val isNightModeEnabled by RecordingManager.nightModeEnabled.collectAsState()
+    val trackedPerson by RecordingManager.humanTracker.trackedPerson.collectAsState()
+    val allDetectedPersons by RecordingManager.humanTracker.allDetectedPersons.collectAsState()
+    val isHumanAfEnabled by RecordingManager.humanTracker.isHumanAfEnabled.collectAsState()
+    val isPersonMoving by RecordingManager.humanTracker.isPersonMoving.collectAsState()
+    val afStatusText by RecordingManager.humanTracker.afStatusText.collectAsState()
 
     val isRecording = recordingState == RecordingState.RECORDING
     val isPaused = recordingState == RecordingState.PAUSED
@@ -342,20 +348,84 @@ fun DualFrameViewfinder(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Top-Left Badge: "9:16" (matching reference screenshot)
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.Black.copy(alpha = 0.65f),
+                // Real-time Human / Motion Autofocus Target Reticles
+                if (isHumanAfEnabled && allDetectedPersons.isNotEmpty() && !isFocusLocked) {
+                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                        for (person in allDetectedPersons) {
+                            val isPrimary = person.id == trackedPerson?.id
+                            val left = person.bounds.left * size.width
+                            val top = person.bounds.top * size.height
+                            val right = person.bounds.right * size.width
+                            val bottom = person.bounds.bottom * size.height
+                            val boxWidth = (right - left).coerceAtLeast(10f)
+                            val boxHeight = (bottom - top).coerceAtLeast(10f)
+
+                            val boxColor = if (isPrimary) {
+                                if (person.isMoving) Color(0xFF00E5FF) else Color(0xFFFFD54F)
+                            } else {
+                                Color.White.copy(alpha = 0.35f)
+                            }
+
+                            val strokeWidth = if (isPrimary) 2.5.dp.toPx() else 1.2.dp.toPx()
+                            val cornerLength = (minOf(boxWidth, boxHeight) * 0.28f).coerceIn(10.dp.toPx(), 26.dp.toPx())
+
+                            // Draw high-precision corner brackets
+                            // Top-Left
+                            drawLine(boxColor, Offset(left, top), Offset(left + cornerLength, top), strokeWidth)
+                            drawLine(boxColor, Offset(left, top), Offset(left, top + cornerLength), strokeWidth)
+                            // Top-Right
+                            drawLine(boxColor, Offset(right, top), Offset(right - cornerLength, top), strokeWidth)
+                            drawLine(boxColor, Offset(right, top), Offset(right, top + cornerLength), strokeWidth)
+                            // Bottom-Left
+                            drawLine(boxColor, Offset(left, bottom), Offset(left + cornerLength, bottom), strokeWidth)
+                            drawLine(boxColor, Offset(left, bottom), Offset(left, bottom - cornerLength), strokeWidth)
+                            // Bottom-Right
+                            drawLine(boxColor, Offset(right, bottom), Offset(right - cornerLength, bottom), strokeWidth)
+                            drawLine(boxColor, Offset(right, bottom), Offset(right, bottom - cornerLength), strokeWidth)
+
+                            if (isPrimary) {
+                                val cx = (left + right) / 2f
+                                val cy = (top + bottom) / 2f
+                                drawCircle(boxColor.copy(alpha = 0.85f), radius = 3.5.dp.toPx(), center = Offset(cx, cy))
+                            }
+                        }
+                    }
+                }
+
+                // Top-Left Badges: "9:16" + Dynamic AF Status
+                Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(10.dp)
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = "9:16",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp),
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.Black.copy(alpha = 0.65f)
+                    ) {
+                        Text(
+                            text = "9:16",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp),
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+
+                    if (isHumanAfEnabled) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isPersonMoving) Color(0xFF006064).copy(alpha = 0.85f)
+                            else if (trackedPerson != null) Color(0xFFE65100).copy(alpha = 0.85f)
+                            else Color.Black.copy(alpha = 0.65f)
+                        ) {
+                            Text(
+                                text = if (isPersonMoving) "🏃 MOTION AF" else if (trackedPerson != null) "👤 HUMAN AF" else "👁 SCANNING",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                                color = if (isPersonMoving) Color(0xFF80DEEA) else if (trackedPerson != null) Color(0xFFFFE082) else Color.White.copy(alpha = 0.7f),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
                 }
 
                 // Top-Right Badge: "★ PRO" / "★ DUAL" (matching reference screenshot)
@@ -487,21 +557,39 @@ fun DualFrameViewfinder(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = if (isFocusLocked) "FOCUS: LOCKED (Tap to Auto)" else "FOCUS: AUTO",
+                    text = if (isFocusLocked) "FOCUS: LOCKED (Tap to Auto)" else afStatusText,
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = if (isFocusLocked) Color(0xFFFFD54F) else Color.White,
-                    modifier = Modifier.clickable { RecordingManager.toggleFocusLock() }
+                    color = if (isFocusLocked) Color(0xFFFFD54F)
+                    else if (isPersonMoving) Color(0xFF00E5FF)
+                    else if (trackedPerson != null) Color(0xFFFFD54F)
+                    else Color.White,
+                    modifier = Modifier.clickable {
+                        if (isFocusLocked) {
+                            RecordingManager.toggleFocusLock()
+                        } else {
+                            RecordingManager.humanTracker.toggleHumanAf()
+                        }
+                    }
                 )
                 
                 Row(
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF222222)),
                 ) {
                     Text(
+                        text = if (isHumanAfEnabled) "HUMAN AF" else "AF OFF",
+                        modifier = Modifier
+                            .clickable { RecordingManager.humanTracker.toggleHumanAf() }
+                            .background(if (isHumanAfEnabled) Color(0xFF2E7D32) else Color.Transparent)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (isHumanAfEnabled) Color.White else Color.Gray
+                    )
+                    Text(
                         text = "NIGHT",
                         modifier = Modifier
                             .clickable { RecordingManager.toggleNightMode() }
                             .background(if (isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = if (isNightModeEnabled) Color.Black else Color.White
                     )
@@ -510,7 +598,7 @@ fun DualFrameViewfinder(
                         modifier = Modifier
                             .clickable { RecordingManager.setExposureMode(0) }
                             .background(if (exposureMode == 0 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = if (exposureMode == 0 && !isNightModeEnabled) Color.Black else Color.White
                     )
@@ -519,7 +607,7 @@ fun DualFrameViewfinder(
                         modifier = Modifier
                             .clickable { RecordingManager.setExposureMode(1) }
                             .background(if (exposureMode == 1 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = if (exposureMode == 1 && !isNightModeEnabled) Color.Black else Color.White
                     )

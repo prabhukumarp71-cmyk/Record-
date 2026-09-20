@@ -76,6 +76,8 @@ object RecordingManager {
     private val _supportedFpsRanges = MutableStateFlow<List<Int>>(listOf(30))
     val supportedFpsRanges: StateFlow<List<Int>> = _supportedFpsRanges
 
+    val humanTracker = HumanAutofocusTracker()
+
     var previewUseCase: Preview? = null
         private set
 
@@ -220,11 +222,23 @@ object RecordingManager {
                     previewUseCase = null
                 }
 
+                // ImageAnalysis for Real-time Human / Motion Detection and Autofocus Tracking
+                val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
+                val imageAnalysis = androidx.camera.core.ImageAnalysis.Builder()
+                    .setBackpressureStrategy(androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setOutputImageFormat(androidx.camera.core.ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                    .build()
+                imageAnalysis.setAnalyzer(humanTracker.executor, humanTracker.createAnalyzer(isFront))
+                useCases.add(imageAnalysis)
+
                 camera = cameraProvider?.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
                     *useCases.toTypedArray()
                 )
+
+                // Attach camera to human tracking autofocus system
+                humanTracker.attachCamera(camera)
 
                 // Apply exposure compensation boost if night mode is enabled
                 applyExposure()
@@ -296,14 +310,24 @@ object RecordingManager {
                 .build()
             currentCam.cameraControl.startFocusAndMetering(action)
         } else {
+            humanTracker.clearSelectedPerson()
             currentCam.cameraControl.cancelFocusAndMetering()
         }
     }
 
     fun focusAtPoint(x: Float, y: Float) {
         val currentCam = camera ?: return
+        // If tap touches a detected person, select and track that person
+        val hitPerson = humanTracker.selectPersonAt(x, y)
+        if (hitPerson) {
+            _isFocusLocked.value = false
+            return
+        }
+
+        // Otherwise, tap locks manual focus and exposure to this specific point
+        humanTracker.clearSelectedPerson()
         val factory = androidx.camera.core.SurfaceOrientedMeteringPointFactory(1f, 1f)
-        val point = factory.createPoint(x, y)
+        val point = factory.createPoint(x.coerceIn(0f, 1f), y.coerceIn(0f, 1f))
         val action = androidx.camera.core.FocusMeteringAction.Builder(point, androidx.camera.core.FocusMeteringAction.FLAG_AF or androidx.camera.core.FocusMeteringAction.FLAG_AE)
             .disableAutoCancel()
             .build()
@@ -498,6 +522,7 @@ object RecordingManager {
     }
 
     fun unbind() {
+        humanTracker.detachCamera()
         cameraProvider?.unbindAll()
     }
 }
