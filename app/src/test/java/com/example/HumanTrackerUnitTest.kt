@@ -43,12 +43,38 @@ class HumanTrackerUnitTest {
     fun testHumanAfToggle() {
         val tracker = HumanAutofocusTracker()
         assertTrue(tracker.isHumanAfEnabled.value)
+        assertEquals(com.example.camera.AutoFocusMode.HUMAN_PRIORITY, tracker.afMode.value)
 
         tracker.setHumanAfEnabled(false)
         assertEquals(false, tracker.isHumanAfEnabled.value)
+        assertEquals(com.example.camera.AutoFocusMode.STANDARD_AUTO, tracker.afMode.value)
         assertNull(tracker.trackedPerson.value)
 
         tracker.setHumanAfEnabled(true)
         assertTrue(tracker.isHumanAfEnabled.value)
+        assertEquals(com.example.camera.AutoFocusMode.HUMAN_PRIORITY, tracker.afMode.value)
+
+        // Test cycle
+        tracker.cycleAfMode()
+        assertEquals(com.example.camera.AutoFocusMode.MOTION_TRACKING, tracker.afMode.value)
+
+        tracker.cycleAfMode()
+        assertEquals(com.example.camera.AutoFocusMode.STANDARD_AUTO, tracker.afMode.value)
+
+        tracker.cycleAfMode()
+        assertEquals(com.example.camera.AutoFocusMode.HUMAN_PRIORITY, tracker.afMode.value)
+    }
+
+    @Test
+    fun testMotionTarget() {
+        val motion = com.example.camera.MotionTarget(
+            bounds = RectF(0.2f, 0.2f, 0.4f, 0.4f),
+            centerX = 0.3f,
+            centerY = 0.3f,
+            intensity = 0.8f,
+            timestamp = System.currentTimeMillis()
+        )
+        assertEquals(0.3f, motion.centerX, 0.001f)
+        assertEquals(0.8f, motion.intensity, 0.001f)
     }
 }

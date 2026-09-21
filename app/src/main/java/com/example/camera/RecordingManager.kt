@@ -238,7 +238,7 @@ object RecordingManager {
                 )
 
                 // Attach camera to human tracking autofocus system
-                humanTracker.attachCamera(camera)
+                humanTracker.attachCamera(camera, imageAnalysis)
 
                 // Apply exposure compensation boost if night mode is enabled
                 applyExposure()

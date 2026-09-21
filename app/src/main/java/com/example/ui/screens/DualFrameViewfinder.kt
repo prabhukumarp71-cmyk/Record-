@@ -151,6 +151,9 @@ fun DualFrameViewfinder(
     val isHumanAfEnabled by RecordingManager.humanTracker.isHumanAfEnabled.collectAsState()
     val isPersonMoving by RecordingManager.humanTracker.isPersonMoving.collectAsState()
     val afStatusText by RecordingManager.humanTracker.afStatusText.collectAsState()
+    val afMode by RecordingManager.humanTracker.afMode.collectAsState()
+    val trackedMotionTarget by RecordingManager.humanTracker.trackedMotionTarget.collectAsState()
+    val isMotionActive by RecordingManager.humanTracker.isMotionActive.collectAsState()
 
     val isRecording = recordingState == RecordingState.RECORDING
     val isPaused = recordingState == RecordingState.PAUSED
@@ -341,6 +344,7 @@ fun DualFrameViewfinder(
                             textureView?.let { tv ->
                                 mirrorViewRef?.startMirroring(tv)
                             }
+                            RecordingManager.humanTracker.setMeteringPointFactory(pv.meteringPointFactory)
                         }
 
                         frameLayout
@@ -349,7 +353,7 @@ fun DualFrameViewfinder(
                 )
 
                 // Real-time Human / Motion Autofocus Target Reticles
-                if (isHumanAfEnabled && allDetectedPersons.isNotEmpty() && !isFocusLocked) {
+                if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO && !isFocusLocked) {
                     androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                         for (person in allDetectedPersons) {
                             val isPrimary = person.id == trackedPerson?.id
@@ -389,6 +393,37 @@ fun DualFrameViewfinder(
                                 drawCircle(boxColor.copy(alpha = 0.85f), radius = 3.5.dp.toPx(), center = Offset(cx, cy))
                             }
                         }
+
+                        // Also draw motion target reticle if motion is active and not already focused on a moving person
+                        val motion = trackedMotionTarget
+                        if (motion != null && (trackedPerson == null || !isPersonMoving)) {
+                            val left = motion.bounds.left * size.width
+                            val top = motion.bounds.top * size.height
+                            val right = motion.bounds.right * size.width
+                            val bottom = motion.bounds.bottom * size.height
+                            val boxWidth = (right - left).coerceAtLeast(10f)
+                            val boxHeight = (bottom - top).coerceAtLeast(10f)
+                            val mColor = Color(0xFF00E5FF)
+                            val strokeWidth = 2.dp.toPx()
+                            val cornerLength = (minOf(boxWidth, boxHeight) * 0.25f).coerceIn(8.dp.toPx(), 22.dp.toPx())
+
+                            // Top-Left
+                            drawLine(mColor, Offset(left, top), Offset(left + cornerLength, top), strokeWidth)
+                            drawLine(mColor, Offset(left, top), Offset(left, top + cornerLength), strokeWidth)
+                            // Top-Right
+                            drawLine(mColor, Offset(right, top), Offset(right - cornerLength, top), strokeWidth)
+                            drawLine(mColor, Offset(right, top), Offset(right, top + cornerLength), strokeWidth)
+                            // Bottom-Left
+                            drawLine(mColor, Offset(left, bottom), Offset(left + cornerLength, bottom), strokeWidth)
+                            drawLine(mColor, Offset(left, bottom), Offset(left, bottom - cornerLength), strokeWidth)
+                            // Bottom-Right
+                            drawLine(mColor, Offset(right, bottom), Offset(right - cornerLength, bottom), strokeWidth)
+                            drawLine(mColor, Offset(right, bottom), Offset(right, bottom - cornerLength), strokeWidth)
+
+                            val cx = motion.centerX * size.width
+                            val cy = motion.centerY * size.height
+                            drawCircle(mColor.copy(alpha = 0.9f), radius = 4.dp.toPx(), center = Offset(cx, cy))
+                        }
                     }
                 }
 
@@ -411,17 +446,18 @@ fun DualFrameViewfinder(
                         )
                     }
 
-                    if (isHumanAfEnabled) {
+                    if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) {
+                        val hasMotion = isPersonMoving || isMotionActive
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = if (isPersonMoving) Color(0xFF006064).copy(alpha = 0.85f)
+                            color = if (hasMotion) Color(0xFF006064).copy(alpha = 0.85f)
                             else if (trackedPerson != null) Color(0xFFE65100).copy(alpha = 0.85f)
                             else Color.Black.copy(alpha = 0.65f)
                         ) {
                             Text(
-                                text = if (isPersonMoving) "🏃 MOTION AF" else if (trackedPerson != null) "👤 HUMAN AF" else "👁 SCANNING",
+                                text = if (hasMotion) "🏃 MOTION AF" else if (trackedPerson != null) "👤 HUMAN AF" else "👁 SCANNING",
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                                color = if (isPersonMoving) Color(0xFF80DEEA) else if (trackedPerson != null) Color(0xFFFFE082) else Color.White.copy(alpha = 0.7f),
+                                color = if (hasMotion) Color(0xFF80DEEA) else if (trackedPerson != null) Color(0xFFFFE082) else Color.White.copy(alpha = 0.7f),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
@@ -575,14 +611,24 @@ fun DualFrameViewfinder(
                 Row(
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF222222)),
                 ) {
+                    val afButtonText = when (afMode) {
+                        com.example.camera.AutoFocusMode.HUMAN_PRIORITY -> "HUMAN AF"
+                        com.example.camera.AutoFocusMode.MOTION_TRACKING -> "MOTION AF"
+                        com.example.camera.AutoFocusMode.STANDARD_AUTO -> "AF OFF"
+                    }
+                    val afButtonBg = when (afMode) {
+                        com.example.camera.AutoFocusMode.HUMAN_PRIORITY -> Color(0xFF2E7D32)
+                        com.example.camera.AutoFocusMode.MOTION_TRACKING -> Color(0xFF00838F)
+                        com.example.camera.AutoFocusMode.STANDARD_AUTO -> Color.Transparent
+                    }
                     Text(
-                        text = if (isHumanAfEnabled) "HUMAN AF" else "AF OFF",
+                        text = afButtonText,
                         modifier = Modifier
-                            .clickable { RecordingManager.humanTracker.toggleHumanAf() }
-                            .background(if (isHumanAfEnabled) Color(0xFF2E7D32) else Color.Transparent)
+                            .clickable { RecordingManager.humanTracker.cycleAfMode() }
+                            .background(afButtonBg)
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = if (isHumanAfEnabled) Color.White else Color.Gray
+                        color = if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) Color.White else Color.Gray
                     )
                     Text(
                         text = "NIGHT",
