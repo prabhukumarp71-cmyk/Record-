@@ -25,8 +25,8 @@ import kotlin.math.abs
 import kotlin.math.hypot
 
 enum class AutoFocusMode {
+    MOTION_TRACKING, // Automatically tracks and focuses on ANY movement in the frame immediately
     HUMAN_PRIORITY,  // Prioritizes moving humans, then stationary humans, then center
-    MOTION_TRACKING, // Prioritizes ANY detected motion in the frame (human, hand, object)
     STANDARD_AUTO    // Native center continuous autofocus
 }
 
@@ -52,12 +52,12 @@ class HumanAutofocusTracker {
 
     companion object {
         private const val TAG = "HumanAutofocusTracker"
-        private const val MOTION_SPEED_THRESHOLD = 0.025f // 2.5% screen distance / sec
-        private const val MOTION_PERSISTENCE_MS = 1400L   // Keep marked as moving for 1.4s
+        private const val MOTION_SPEED_THRESHOLD = 0.020f // 2.0% screen distance / sec
+        private const val MOTION_PERSISTENCE_MS = 1600L   // Keep marked as moving for 1.6s
         private const val HUMAN_LOST_TIMEOUT_MS = 1200L
-        private const val MIN_AF_TRIGGER_INTERVAL_MS = 500L
-        private const val PERIODIC_AF_INTERVAL_MS = 1500L
-        private const val MOVEMENT_DISPLACEMENT_THRESHOLD = 0.035f // 3.5% screen displacement
+        private const val MIN_AF_TRIGGER_INTERVAL_MS = 380L // Faster re-focus on movement (380ms)
+        private const val PERIODIC_AF_INTERVAL_MS = 1400L
+        private const val MOVEMENT_DISPLACEMENT_THRESHOLD = 0.028f // 2.8% screen displacement
         private const val GRID_SIZE = 16
     }
 
@@ -75,8 +75,8 @@ class HumanAutofocusTracker {
     private var activeImageAnalysis: ImageAnalysis? = null
     private var customMeteringPointFactory: MeteringPointFactory? = null
 
-    // Tracking mode: default to HUMAN_PRIORITY
-    private val _afMode = MutableStateFlow(AutoFocusMode.HUMAN_PRIORITY)
+    // Tracking mode: default to MOTION_TRACKING so movement automatically gets focused
+    private val _afMode = MutableStateFlow(AutoFocusMode.MOTION_TRACKING)
     val afMode: StateFlow<AutoFocusMode> = _afMode
 
     // Legacy boolean for compatibility
@@ -98,7 +98,7 @@ class HumanAutofocusTracker {
     private val _isMotionActive = MutableStateFlow(false)
     val isMotionActive: StateFlow<Boolean> = _isMotionActive
 
-    private val _afStatusText = MutableStateFlow("AF: HUMAN AUTO")
+    private val _afStatusText = MutableStateFlow("AF: MOTION TRACKING 🏃")
     val afStatusText: StateFlow<String> = _afStatusText
 
     // Explicit user selected person ID
@@ -315,8 +315,8 @@ class HumanAutofocusTracker {
                 val prevVal = prevGrid[r * GRID_SIZE + c].toInt() and 0xFF
                 val diff = abs(currVal - prevVal)
 
-                // Luminance difference threshold
-                if (diff > 26) {
+                // Responsive luminance difference threshold (22 for rapid detection)
+                if (diff > 22) {
                     motionCellsCount++
                     val normX = (c + 0.5f) / GRID_SIZE
                     val normY = (r + 0.5f) / GRID_SIZE
@@ -331,7 +331,7 @@ class HumanAutofocusTracker {
             }
         }
 
-        // Require at least 2 cells with motion to reject isolated noise
+        // Require at least 2 cells with motion to reject isolated sensor noise
         if (motionCellsCount < 2) {
             return null
         }
@@ -626,8 +626,9 @@ class HumanAutofocusTracker {
         val displacement = hypot(smoothedTargetX - lastTriggeredX, smoothedTargetY - lastTriggeredY)
         val elapsed = now - lastAfTriggerTime
 
-        // Do not interrupt an active AF sweep if it started very recently (< 650ms)
-        if (isFocusOperationActive && elapsed < 650L && !force) {
+        // Do not interrupt an active AF sweep if it started very recently (< 450ms when moving, 650ms otherwise)
+        val minSweepDuration = if (isMoving) 450L else 650L
+        if (isFocusOperationActive && elapsed < minSweepDuration && !force) {
             return
         }
 

@@ -43,7 +43,7 @@ class HumanTrackerUnitTest {
     fun testHumanAfToggle() {
         val tracker = HumanAutofocusTracker()
         assertTrue(tracker.isHumanAfEnabled.value)
-        assertEquals(com.example.camera.AutoFocusMode.HUMAN_PRIORITY, tracker.afMode.value)
+        assertEquals(com.example.camera.AutoFocusMode.MOTION_TRACKING, tracker.afMode.value)
 
         tracker.setHumanAfEnabled(false)
         assertEquals(false, tracker.isHumanAfEnabled.value)
