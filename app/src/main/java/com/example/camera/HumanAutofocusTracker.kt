@@ -37,6 +37,7 @@ data class TrackedPerson(
     val centerY: Float,
     val velocity: Float, // Normalized screen distance / second
     val isMoving: Boolean,
+    val isNear: Boolean = (bounds.width() > 0.18f || (bounds.width() * bounds.height() > 0.035f)),
     val lastSeenTimestamp: Long
 )
 
@@ -45,6 +46,7 @@ data class MotionTarget(
     val centerX: Float,
     val centerY: Float,
     val intensity: Float,
+    val isNear: Boolean = (bounds.width() > 0.32f || bounds.height() > 0.32f),
     val timestamp: Long
 )
 
@@ -97,6 +99,9 @@ class HumanAutofocusTracker {
 
     private val _isMotionActive = MutableStateFlow(false)
     val isMotionActive: StateFlow<Boolean> = _isMotionActive
+
+    private val _isFarFocusOnly = MutableStateFlow(false)
+    val isFarFocusOnly: StateFlow<Boolean> = _isFarFocusOnly
 
     private val _afStatusText = MutableStateFlow("AF: MOTION TRACKING 🏃")
     val afStatusText: StateFlow<String> = _afStatusText
@@ -175,6 +180,23 @@ class HumanAutofocusTracker {
 
     fun toggleHumanAf() {
         cycleAfMode()
+    }
+
+    fun setFarFocusOnly(enabled: Boolean) {
+        _isFarFocusOnly.value = enabled
+        if (enabled) {
+            _afStatusText.value = "FOCUS: FAR ONLY 🏔️ (Near Ignored)"
+        } else {
+            when (_afMode.value) {
+                AutoFocusMode.MOTION_TRACKING -> _afStatusText.value = "AF: MOTION TRACKING 🏃"
+                AutoFocusMode.HUMAN_PRIORITY -> _afStatusText.value = "AF: HUMAN AUTO"
+                AutoFocusMode.STANDARD_AUTO -> _afStatusText.value = "AF: STANDARD AUTO"
+            }
+        }
+    }
+
+    fun toggleFarFocusOnly() {
+        setFarFocusOnly(!_isFarFocusOnly.value)
     }
 
     fun attachCamera(camera: Camera?, imageAnalysis: ImageAnalysis? = null) {
@@ -489,6 +511,34 @@ class HumanAutofocusTracker {
 
         _allDetectedPersons.value = detectedList
 
+        // Mode: FAR ONLY: Ignore near persons and near motion completely; track only distant subjects
+        if (_isFarFocusOnly.value) {
+            val farPersons = detectedList.filter { !it.isNear }
+            val farMotion = if (motionTarget != null && !motionTarget.isNear) motionTarget else null
+
+            val targetFar = selectBestTarget(farPersons)
+            if (targetFar != null) {
+                _trackedPerson.value = targetFar
+                _trackedMotionTarget.value = null
+                _isPersonMoving.value = targetFar.isMoving
+                _isMotionActive.value = false
+                _afStatusText.value = if (targetFar.isMoving) "FAR: MOVING SUBJECT 🏔️" else "FAR: DISTANT SUBJECT 🏔️"
+            } else if (farMotion != null) {
+                _trackedPerson.value = null
+                _trackedMotionTarget.value = farMotion
+                _isPersonMoving.value = false
+                _isMotionActive.value = true
+                _afStatusText.value = "FAR: DISTANT MOTION 🏔️"
+            } else {
+                _trackedPerson.value = null
+                _trackedMotionTarget.value = null
+                _isPersonMoving.value = false
+                _isMotionActive.value = false
+                _afStatusText.value = "FOCUS: FAR ONLY 🏔️ (Near Ignored)"
+            }
+            return
+        }
+
         // Mode: MOTION_TRACKING: If motion target exists, give it focus
         if (_afMode.value == AutoFocusMode.MOTION_TRACKING && motionTarget != null) {
             val movingPerson = detectedList.firstOrNull { it.isMoving }
@@ -614,6 +664,11 @@ class HumanAutofocusTracker {
     }
 
     private fun triggerAf(targetX: Float, targetY: Float, force: Boolean) {
+        if (_isFarFocusOnly.value) {
+            // When Far Focus Only is active, physical lens distance is locked to 0.0f (Infinity).
+            // Do not execute near AF sweeps.
+            return
+        }
         val camera = activeCamera ?: return
         val now = System.currentTimeMillis()
 

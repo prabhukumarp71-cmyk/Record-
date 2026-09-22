@@ -10,10 +10,13 @@ import android.hardware.camera2.CaptureRequest
 import android.provider.MediaStore
 import android.util.Log
 import android.util.Range
+import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.DynamicRange
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
@@ -51,6 +54,9 @@ object RecordingManager {
 
     private val _isFocusLocked = MutableStateFlow(false)
     val isFocusLocked: StateFlow<Boolean> = _isFocusLocked
+
+    private val _isFarFocusOnly = MutableStateFlow(false)
+    val isFarFocusOnly: StateFlow<Boolean> = _isFarFocusOnly
 
     private val _dualFormatEnabled = MutableStateFlow(true)
     val dualFormatEnabled: StateFlow<Boolean> = _dualFormatEnabled
@@ -91,7 +97,7 @@ object RecordingManager {
     private var currentLensFacing = CameraSelector.LENS_FACING_BACK
     private var currentLifecycleOwner: LifecycleOwner? = null
     private var currentContext: Context? = null
-    private var currentQuality: Quality = Quality.HIGHEST
+    private var currentQuality: Quality = Quality.HD
     private var onFinalizeCallback: ((VideoRecordEvent.Finalize?) -> Unit)? = null
     private var currentRecordingDisplayName: String = ""
 
@@ -151,13 +157,35 @@ object RecordingManager {
                     }
                 }
 
-                @Suppress("DEPRECATION")
-                val supportedQualities = cameraInfo?.let { QualitySelector.getSupportedQualities(it) } ?: emptyList()
+                val videoCapabilities = cameraInfo?.let {
+                    try {
+                        Recorder.getVideoCapabilities(it)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error querying VideoCapabilities: ${e.message}")
+                        null
+                    }
+                }
+                val supportedQualities: List<Quality> = videoCapabilities?.getSupportedQualities(DynamicRange.SDR) ?: emptyList()
 
-                val qualitySelector = QualitySelector.from(
-                    quality,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
-                )
+                val targetQuality = when {
+                    supportedQualities.contains(quality) -> quality
+                    supportedQualities.contains(Quality.HD) -> Quality.HD
+                    supportedQualities.contains(Quality.SD) -> Quality.SD
+                    supportedQualities.isNotEmpty() -> supportedQualities.first()
+                    else -> Quality.SD
+                }
+
+                val qualitySelector = if (supportedQualities.isNotEmpty()) {
+                    QualitySelector.from(
+                        targetQuality,
+                        FallbackStrategy.lowerQualityOrHigherThan(Quality.LOWEST)
+                    )
+                } else {
+                    QualitySelector.fromOrderedList(
+                        listOf(Quality.SD, Quality.HD, Quality.LOWEST),
+                        FallbackStrategy.higherQualityOrLowerThan(Quality.LOWEST)
+                    )
+                }
 
                 val recorder = Recorder.Builder()
                     .setQualitySelector(qualitySelector)
@@ -165,6 +193,18 @@ object RecordingManager {
 
                 val videoCaptureBuilder = VideoCapture.Builder(recorder)
                 val camera2Extender = Camera2Interop.Extender(videoCaptureBuilder)
+
+                // If Far Focus Only is enabled, lock lens to far distance / infinity (0.0 diopters) and turn off near AF sweeps
+                if (_isFarFocusOnly.value) {
+                    camera2Extender.setCaptureRequestOption(
+                        CaptureRequest.CONTROL_AF_MODE,
+                        CaptureRequest.CONTROL_AF_MODE_OFF
+                    )
+                    camera2Extender.setCaptureRequestOption(
+                        CaptureRequest.LENS_FOCUS_DISTANCE,
+                        0.0f
+                    )
+                }
 
                 // Configure low-light optimizations tailored to hardware limitations (Moto Edge 50 Fusion Sony LYT-700C / Snapdragon 7s Gen 2 sensor)
                 if (_nightModeEnabled.value) {
@@ -231,14 +271,28 @@ object RecordingManager {
                 imageAnalysis.setAnalyzer(humanTracker.executor, humanTracker.createAnalyzer(isFront))
                 useCases.add(imageAnalysis)
 
-                camera = cameraProvider?.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    *useCases.toTypedArray()
-                )
+                try {
+                    camera = cameraProvider?.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        *useCases.toTypedArray()
+                    )
+                    humanTracker.attachCamera(camera, imageAnalysis)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Binding all use cases failed, attempting fallback without ImageAnalysis: ${e.message}")
+                    useCases.remove(imageAnalysis)
+                    camera = cameraProvider?.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        *useCases.toTypedArray()
+                    )
+                    humanTracker.attachCamera(camera, null)
+                }
 
-                // Attach camera to human tracking autofocus system
-                humanTracker.attachCamera(camera, imageAnalysis)
+                // If Far Focus Only is enabled, enforce Camera2 infinity focus distance
+                if (_isFarFocusOnly.value) {
+                    applyFarFocus()
+                }
 
                 // Apply exposure compensation boost if night mode is enabled
                 applyExposure()
@@ -298,8 +352,56 @@ object RecordingManager {
         }
     }
 
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    fun toggleFarFocusOnly() {
+        setFarFocusOnly(!_isFarFocusOnly.value)
+    }
+
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    fun setFarFocusOnly(enabled: Boolean) {
+        _isFarFocusOnly.value = enabled
+        humanTracker.setFarFocusOnly(enabled)
+        if (enabled) {
+            _isFocusLocked.value = false
+            camera?.cameraControl?.cancelFocusAndMetering()
+        }
+        applyFarFocus()
+    }
+
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    private fun applyFarFocus() {
+        val currentCam = camera ?: return
+        try {
+            val camera2Control = Camera2CameraControl.from(currentCam.cameraControl)
+            if (_isFarFocusOnly.value) {
+                // Focus ONLY far: turn off continuous AF sweeps that lock to near foreground,
+                // and lock lens focus distance strictly to infinity (0.0f diopters = infinity/far)
+                val options = CaptureRequestOptions.Builder()
+                    .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                    .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
+                    .build()
+                camera2Control.setCaptureRequestOptions(options)
+                Log.d(TAG, "Far Focus Mode applied: LENS_FOCUS_DISTANCE = 0.0f (Infinity), AF_MODE = OFF")
+            } else {
+                camera2Control.clearCaptureRequestOptions()
+                // Re-enable normal continuous AF
+                val options = CaptureRequestOptions.Builder()
+                    .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                    .build()
+                camera2Control.setCaptureRequestOptions(options)
+                Log.d(TAG, "Far Focus Mode disabled: restored continuous AF")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error applying far focus options", e)
+        }
+    }
+
     fun toggleFocusLock() {
         val currentCam = camera ?: return
+        if (_isFarFocusOnly.value) {
+            // Turning on focus lock cancels Far Only mode
+            setFarFocusOnly(false)
+        }
         _isFocusLocked.value = !_isFocusLocked.value
         
         if (_isFocusLocked.value) {
@@ -317,6 +419,12 @@ object RecordingManager {
 
     fun focusAtPoint(x: Float, y: Float) {
         val currentCam = camera ?: return
+        if (_isFarFocusOnly.value) {
+            // Far focus is strictly locked to infinity; re-assert far focus
+            applyFarFocus()
+            return
+        }
+
         // If tap touches a detected person, select and track that person
         val hitPerson = humanTracker.selectPersonAt(x, y)
         if (hitPerson) {

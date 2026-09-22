@@ -143,6 +143,7 @@ fun DualFrameViewfinder(
     val isDualFormat by RecordingManager.dualFormatEnabled.collectAsState()
     val isProcessingDual by RecordingManager.isProcessingDualFormat.collectAsState()
     val isFocusLocked by RecordingManager.isFocusLocked.collectAsState()
+    val isFarFocusOnly by RecordingManager.isFarFocusOnly.collectAsState()
     val exposureMode by RecordingManager.exposureMode.collectAsState()
     val exposureCompensation by RecordingManager.exposureCompensation.collectAsState()
     val isNightModeEnabled by RecordingManager.nightModeEnabled.collectAsState()
@@ -353,7 +354,7 @@ fun DualFrameViewfinder(
                 )
 
                 // Real-time Human / Motion Autofocus Target Reticles
-                if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO && !isFocusLocked) {
+                if ((afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO || isFarFocusOnly) && !isFocusLocked) {
                     androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                         for (person in allDetectedPersons) {
                             val isPrimary = person.id == trackedPerson?.id
@@ -364,13 +365,24 @@ fun DualFrameViewfinder(
                             val boxWidth = (right - left).coerceAtLeast(10f)
                             val boxHeight = (bottom - top).coerceAtLeast(10f)
 
-                            val boxColor = if (isPrimary) {
+                            val boxColor = if (isFarFocusOnly) {
+                                if (person.isNear) {
+                                    Color.White.copy(alpha = 0.20f) // Near person ignored
+                                } else if (isPrimary) {
+                                    Color(0xFF00E5FF) // Distant target focused
+                                } else {
+                                    Color(0xFFFFD54F).copy(alpha = 0.6f)
+                                }
+                            } else if (isPrimary) {
                                 if (person.isMoving) Color(0xFF00E5FF) else Color(0xFFFFD54F)
                             } else {
                                 Color.White.copy(alpha = 0.35f)
                             }
 
-                            val strokeWidth = if (isPrimary) 2.5.dp.toPx() else 1.2.dp.toPx()
+                            val strokeWidth = if (isFarFocusOnly && person.isNear) 1.dp.toPx()
+                            else if (isPrimary) 2.5.dp.toPx()
+                            else 1.2.dp.toPx()
+
                             val cornerLength = (minOf(boxWidth, boxHeight) * 0.28f).coerceIn(10.dp.toPx(), 26.dp.toPx())
 
                             // Draw high-precision corner brackets
@@ -387,7 +399,7 @@ fun DualFrameViewfinder(
                             drawLine(boxColor, Offset(right, bottom), Offset(right - cornerLength, bottom), strokeWidth)
                             drawLine(boxColor, Offset(right, bottom), Offset(right, bottom - cornerLength), strokeWidth)
 
-                            if (isPrimary) {
+                            if (isPrimary && (!isFarFocusOnly || !person.isNear)) {
                                 val cx = (left + right) / 2f
                                 val cy = (top + bottom) / 2f
                                 drawCircle(boxColor.copy(alpha = 0.85f), radius = 3.5.dp.toPx(), center = Offset(cx, cy))
@@ -396,7 +408,7 @@ fun DualFrameViewfinder(
 
                         // Also draw motion target reticle if motion is active and not already focused on a moving person
                         val motion = trackedMotionTarget
-                        if (motion != null && (trackedPerson == null || !isPersonMoving)) {
+                        if (motion != null && (!isFarFocusOnly || !motion.isNear) && (trackedPerson == null || !isPersonMoving)) {
                             val left = motion.bounds.left * size.width
                             val top = motion.bounds.top * size.height
                             val right = motion.bounds.right * size.width
@@ -446,7 +458,19 @@ fun DualFrameViewfinder(
                         )
                     }
 
-                    if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) {
+                    if (isFarFocusOnly) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF0277BD).copy(alpha = 0.9f)
+                        ) {
+                            Text(
+                                text = "🏔️ FAR ONLY",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    } else if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) {
                         val hasMotion = isPersonMoving || isMotionActive
                         Surface(
                             shape = RoundedCornerShape(8.dp),
@@ -593,14 +617,19 @@ fun DualFrameViewfinder(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = if (isFocusLocked) "FOCUS: LOCKED (Tap to Auto)" else afStatusText,
+                    text = if (isFarFocusOnly) "FOCUS: FAR ONLY 🏔️ (Near Ignored)"
+                    else if (isFocusLocked) "FOCUS: LOCKED (Tap to Auto)" 
+                    else afStatusText,
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = if (isFocusLocked) Color(0xFFFFD54F)
+                    color = if (isFarFocusOnly) Color(0xFF00E5FF)
+                    else if (isFocusLocked) Color(0xFFFFD54F)
                     else if (isPersonMoving) Color(0xFF00E5FF)
                     else if (trackedPerson != null) Color(0xFFFFD54F)
                     else Color.White,
                     modifier = Modifier.clickable {
-                        if (isFocusLocked) {
+                        if (isFarFocusOnly) {
+                            RecordingManager.toggleFarFocusOnly()
+                        } else if (isFocusLocked) {
                             RecordingManager.toggleFocusLock()
                         } else {
                             RecordingManager.humanTracker.toggleHumanAf()
@@ -624,19 +653,34 @@ fun DualFrameViewfinder(
                     Text(
                         text = afButtonText,
                         modifier = Modifier
-                            .clickable { RecordingManager.humanTracker.cycleAfMode() }
-                            .background(afButtonBg)
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) Color.White else Color.Gray
+                            .clickable {
+                                if (isFarFocusOnly) {
+                                    RecordingManager.setFarFocusOnly(false)
+                                }
+                                RecordingManager.humanTracker.cycleAfMode()
+                            }
+                            .background(if (isFarFocusOnly) Color.Transparent else afButtonBg)
+                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                        color = if (isFarFocusOnly) Color.Gray else if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) Color.White else Color.Gray
+                    )
+                    Text(
+                        text = "FAR ONLY",
+                        modifier = Modifier
+                            .clickable { RecordingManager.toggleFarFocusOnly() }
+                            .background(if (isFarFocusOnly) Color(0xFF0288D1) else Color.Transparent)
+                            .padding(horizontal = 6.dp, vertical = 6.dp)
+                            .testTag("far_focus_toggle_button"),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                        color = if (isFarFocusOnly) Color.White else Color(0xFF81D4FA)
                     )
                     Text(
                         text = "NIGHT",
                         modifier = Modifier
                             .clickable { RecordingManager.toggleNightMode() }
                             .background(if (isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
                         color = if (isNightModeEnabled) Color.Black else Color.White
                     )
                     Text(
@@ -644,8 +688,8 @@ fun DualFrameViewfinder(
                         modifier = Modifier
                             .clickable { RecordingManager.setExposureMode(0) }
                             .background(if (exposureMode == 0 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
                         color = if (exposureMode == 0 && !isNightModeEnabled) Color.Black else Color.White
                     )
                     Text(
@@ -653,8 +697,8 @@ fun DualFrameViewfinder(
                         modifier = Modifier
                             .clickable { RecordingManager.setExposureMode(1) }
                             .background(if (exposureMode == 1 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
                         color = if (exposureMode == 1 && !isNightModeEnabled) Color.Black else Color.White
                     )
                 }
