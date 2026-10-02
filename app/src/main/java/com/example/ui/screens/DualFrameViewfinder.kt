@@ -13,6 +13,10 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,6 +37,8 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -43,6 +49,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.camera.RecordingManager
 import com.example.model.RecordingState
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Custom View that mirrors and crops the camera TextureView to a 16:9 widescreen format.
@@ -144,8 +152,11 @@ fun DualFrameViewfinder(
     val isProcessingDual by RecordingManager.isProcessingDualFormat.collectAsState()
     val isFocusLocked by RecordingManager.isFocusLocked.collectAsState()
     val isFarFocusOnly by RecordingManager.isFarFocusOnly.collectAsState()
+    val isAeLocked by RecordingManager.isAeLocked.collectAsState()
     val exposureMode by RecordingManager.exposureMode.collectAsState()
     val exposureCompensation by RecordingManager.exposureCompensation.collectAsState()
+    val exposureEvValue by RecordingManager.exposureEvValue.collectAsState()
+    val tapMeterPoint by RecordingManager.tapMeterPoint.collectAsState()
     val isNightModeEnabled by RecordingManager.nightModeEnabled.collectAsState()
     val trackedPerson by RecordingManager.humanTracker.trackedPerson.collectAsState()
     val allDetectedPersons by RecordingManager.humanTracker.allDetectedPersons.collectAsState()
@@ -164,6 +175,21 @@ fun DualFrameViewfinder(
     var mirrorViewRef by remember { mutableStateOf<MirrorFrameView?>(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
+    val coroutineScope = rememberCoroutineScope()
+    var showFloatingExposureIndicator by remember { mutableStateOf(false) }
+    var floatingDismissJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    val onDragExposure: (Float) -> Unit = { deltaY ->
+        val deltaNorm = -deltaY * 0.005f
+        RecordingManager.adjustExposureBy(deltaNorm)
+        showFloatingExposureIndicator = true
+        floatingDismissJob?.cancel()
+        floatingDismissJob = coroutineScope.launch {
+            delay(1800)
+            showFloatingExposureIndicator = false
+        }
+    }
+
     val targetFps by com.example.settings.AppSettings.getTargetFps(context).collectAsState(initial = 30)
 
     LaunchedEffect(recordingState, lifecycleOwner, targetFps) {
@@ -173,6 +199,13 @@ fun DualFrameViewfinder(
                 context = context,
                 lifecycleOwner = lifecycleOwner
             )
+        }
+    }
+
+    LaunchedEffect(tapMeterPoint) {
+        if (tapMeterPoint != null) {
+            delay(2500)
+            RecordingManager.clearTapMeterPoint()
         }
     }
 
@@ -311,11 +344,43 @@ fun DualFrameViewfinder(
                     .clip(RoundedCornerShape(12.dp))
                     .border(1.dp, Color(0xFF333333), RoundedCornerShape(12.dp))
                     .background(Color(0xFF121212))
-                    .pointerInput(Unit) {
-                        detectTapGestures { offset ->
-                            val x = offset.x / size.width.toFloat()
-                            val y = offset.y / size.height.toFloat()
-                            RecordingManager.focusAtPoint(x, y)
+                    .pointerInput(isFarFocusOnly) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val startX = down.position.x
+                            val startY = down.position.y
+                            var isDrag = false
+                            var currentY = startY
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) {
+                                    if (!isDrag) {
+                                        val normX = (startX / size.width.toFloat()).coerceIn(0f, 1f)
+                                        val normY = (startY / size.height.toFloat()).coerceIn(0f, 1f)
+                                        RecordingManager.focusAtPoint(normX, normY)
+                                    } else {
+                                        floatingDismissJob?.cancel()
+                                        floatingDismissJob = coroutineScope.launch {
+                                            delay(1800)
+                                            showFloatingExposureIndicator = false
+                                        }
+                                    }
+                                    break
+                                }
+                                val dy = change.position.y - currentY
+                                if (!isDrag && (kotlin.math.abs(change.position.y - startY) > 12f || kotlin.math.abs(change.position.x - startX) > 12f)) {
+                                    if (isFarFocusOnly && kotlin.math.abs(change.position.y - startY) > kotlin.math.abs(change.position.x - startX)) {
+                                        isDrag = true
+                                    }
+                                }
+                                if (isDrag) {
+                                    change.consume()
+                                    onDragExposure(dy)
+                                }
+                                currentY = change.position.y
+                            }
                         }
                     },
                 contentAlignment = Alignment.Center
@@ -353,8 +418,8 @@ fun DualFrameViewfinder(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Real-time Human / Motion Autofocus Target Reticles
-                if ((afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO || isFarFocusOnly) && !isFocusLocked) {
+                // Real-time Human / Motion Autofocus Target Reticles & Far AE Metering Reticle
+                if ((afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO || isFarFocusOnly || tapMeterPoint != null) && !isFocusLocked) {
                     androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                         for (person in allDetectedPersons) {
                             val isPrimary = person.id == trackedPerson?.id
@@ -436,10 +501,39 @@ fun DualFrameViewfinder(
                             val cy = motion.centerY * size.height
                             drawCircle(mColor.copy(alpha = 0.9f), radius = 4.dp.toPx(), center = Offset(cx, cy))
                         }
+
+                        // Draw Tap-to-Meter AE Reticle in Far Only Mode
+                        if (isFarFocusOnly && tapMeterPoint != null) {
+                            val tx = tapMeterPoint!!.first * size.width
+                            val ty = tapMeterPoint!!.second * size.height
+                            val ringRadius = 24.dp.toPx()
+                            val sunColor = Color(0xFFFFD54F)
+
+                            // Outer ring
+                            drawCircle(
+                                color = sunColor,
+                                radius = ringRadius,
+                                center = Offset(tx, ty),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                            )
+                            // Inner center point
+                            drawCircle(
+                                color = sunColor,
+                                radius = 4.dp.toPx(),
+                                center = Offset(tx, ty)
+                            )
+                            // 4 cardinal sun rays
+                            val rayLen = 7.dp.toPx()
+                            val gap = ringRadius + 3.dp.toPx()
+                            drawLine(sunColor, Offset(tx, ty - gap), Offset(tx, ty - gap - rayLen), strokeWidth = 2.dp.toPx())
+                            drawLine(sunColor, Offset(tx, ty + gap), Offset(tx, ty + gap + rayLen), strokeWidth = 2.dp.toPx())
+                            drawLine(sunColor, Offset(tx - gap, ty), Offset(tx - gap - rayLen, ty), strokeWidth = 2.dp.toPx())
+                            drawLine(sunColor, Offset(tx + gap, ty), Offset(tx + gap + rayLen, ty), strokeWidth = 2.dp.toPx())
+                        }
                     }
                 }
 
-                // Top-Left Badges: "9:16" + Dynamic AF Status
+                // Top-Left Badges: "9:16" + Dynamic AF Status + Far Exposure Badges
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -469,6 +563,32 @@ fun DualFrameViewfinder(
                                 color = Color.White,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
+                        }
+
+                        if (isAeLocked) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFFFF6F00).copy(alpha = 0.95f)
+                            ) {
+                                Text(
+                                    text = "🔒 AE LOCKED",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        } else if (exposureMode == 1) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFFFFD54F)
+                            ) {
+                                Text(
+                                    text = String.format(if (exposureEvValue > 0) "+%.1f EV" else "%.1f EV", exposureEvValue),
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                                    color = Color.Black,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     } else if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) {
                         val hasMotion = isPersonMoving || isMotionActive
@@ -539,6 +659,63 @@ fun DualFrameViewfinder(
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 12.dp)
                 )
+
+                // Floating Exposure Indicator Overlay when swiping to adjust exposure in Far Only mode
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showFloatingExposureIndicator && isFarFocusOnly,
+                    enter = fadeIn(tween(120)) + scaleIn(initialScale = 0.85f),
+                    exit = fadeOut(tween(250)) + scaleOut(targetScale = 0.85f),
+                    modifier = Modifier.align(Alignment.Center)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.Black.copy(alpha = 0.82f),
+                        border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFFFD54F)),
+                        shadowElevation = 8.dp
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.WbSunny,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFFD54F),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = String.format("%+.1f EV", exposureEvValue),
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = Color(0xFFFFD54F)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .width(84.dp)
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(Color.White.copy(alpha = 0.25f))
+                            ) {
+                                val fillFrac = ((exposureCompensation + 1f) / 2f).coerceIn(0f, 1f)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .fillMaxWidth(fraction = fillFrac)
+                                        .background(Color(0xFFFFD54F))
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "Swipe ↕ to adjust EV",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                color = Color.White.copy(alpha = 0.75f)
+                            )
+                        }
+                    }
+                }
             }
 
             // BOTTOM FRAME: 16:9 Horizontal Widescreen Frame
@@ -548,7 +725,46 @@ fun DualFrameViewfinder(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .border(1.dp, Color(0xFF333333), RoundedCornerShape(12.dp))
-                    .background(Color(0xFF121212)),
+                    .background(Color(0xFF121212))
+                    .pointerInput(isFarFocusOnly) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val startX = down.position.x
+                            val startY = down.position.y
+                            var isDrag = false
+                            var currentY = startY
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) {
+                                    if (!isDrag) {
+                                        val normX = (startX / size.width.toFloat()).coerceIn(0f, 1f)
+                                        val normY = (startY / size.height.toFloat()).coerceIn(0f, 1f)
+                                        RecordingManager.focusAtPoint(normX, normY)
+                                    } else {
+                                        floatingDismissJob?.cancel()
+                                        floatingDismissJob = coroutineScope.launch {
+                                            delay(1800)
+                                            showFloatingExposureIndicator = false
+                                        }
+                                    }
+                                    break
+                                }
+                                val dy = change.position.y - currentY
+                                if (!isDrag && (kotlin.math.abs(change.position.y - startY) > 12f || kotlin.math.abs(change.position.x - startX) > 12f)) {
+                                    if (isFarFocusOnly && kotlin.math.abs(change.position.y - startY) > kotlin.math.abs(change.position.x - startX)) {
+                                        isDrag = true
+                                    }
+                                }
+                                if (isDrag) {
+                                    change.consume()
+                                    onDragExposure(dy)
+                                }
+                                currentY = change.position.y
+                            }
+                        }
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 // Live 16:9 Mirror View
@@ -605,117 +821,427 @@ fun DualFrameViewfinder(
             }
         }
         
-        // EXPOSURE CONTROLS
+        // EXPOSURE & FOCUS CONTROLS
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 6.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = if (isFarFocusOnly) "FOCUS: FAR ONLY 🏔️ (Near Ignored)"
-                    else if (isFocusLocked) "FOCUS: LOCKED (Tap to Auto)" 
-                    else afStatusText,
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = if (isFarFocusOnly) Color(0xFF00E5FF)
-                    else if (isFocusLocked) Color(0xFFFFD54F)
-                    else if (isPersonMoving) Color(0xFF00E5FF)
-                    else if (trackedPerson != null) Color(0xFFFFD54F)
-                    else Color.White,
-                    modifier = Modifier.clickable {
-                        if (isFarFocusOnly) {
-                            RecordingManager.toggleFarFocusOnly()
-                        } else if (isFocusLocked) {
-                            RecordingManager.toggleFocusLock()
-                        } else {
-                            RecordingManager.humanTracker.toggleHumanAf()
-                        }
-                    }
-                )
-                
-                Row(
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF222222)),
+            if (isFarFocusOnly) {
+                // DEDICATED FAR ONLY EXPOSURE PANEL
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF191D22),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0288D1).copy(alpha = 0.6f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    val afButtonText = when (afMode) {
-                        com.example.camera.AutoFocusMode.HUMAN_PRIORITY -> "HUMAN AF"
-                        com.example.camera.AutoFocusMode.MOTION_TRACKING -> "MOTION AF"
-                        com.example.camera.AutoFocusMode.STANDARD_AUTO -> "AF OFF"
-                    }
-                    val afButtonBg = when (afMode) {
-                        com.example.camera.AutoFocusMode.HUMAN_PRIORITY -> Color(0xFF2E7D32)
-                        com.example.camera.AutoFocusMode.MOTION_TRACKING -> Color(0xFF00838F)
-                        com.example.camera.AutoFocusMode.STANDARD_AUTO -> Color.Transparent
-                    }
-                    Text(
-                        text = afButtonText,
-                        modifier = Modifier
-                            .clickable {
-                                if (isFarFocusOnly) {
-                                    RecordingManager.setFarFocusOnly(false)
-                                }
-                                RecordingManager.humanTracker.cycleAfMode()
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        // Header Row: Status & EV readout
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Landscape,
+                                    contentDescription = null,
+                                    tint = Color(0xFF00E5FF),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "FAR ONLY EXPOSURE",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = 0.6.sp),
+                                    color = Color(0xFF00E5FF)
+                                )
                             }
-                            .background(if (isFarFocusOnly) Color.Transparent else afButtonBg)
-                            .padding(horizontal = 6.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
-                        color = if (isFarFocusOnly) Color.Gray else if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) Color.White else Color.Gray
-                    )
+
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = when {
+                                        isAeLocked -> Color(0xFFFF6F00)
+                                        exposureMode == 1 -> Color(0xFFFFD54F)
+                                        else -> Color(0xFF2C3238)
+                                    }
+                                ) {
+                                    Text(
+                                        text = when {
+                                            isAeLocked -> "AE LOCKED 🔒"
+                                            exposureMode == 1 -> String.format(if (exposureEvValue > 0) "+%.1f EV" else "%.1f EV", exposureEvValue)
+                                            else -> "AUTO AE"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                                        color = if (exposureMode == 1 && !isAeLocked) Color.Black else Color.White,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+
+                                if (exposureMode == 1 || isAeLocked || exposureCompensation != 0f) {
+                                    Icon(
+                                        Icons.Default.Refresh,
+                                        contentDescription = "Reset Exposure",
+                                        tint = Color.White.copy(alpha = 0.8f),
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .clickable { RecordingManager.resetExposure() }
+                                            .testTag("far_exposure_reset_button")
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Control Mode Selector Row: [ AUTO AE ] [ MANUAL EV ] [ AE LOCK 🔒 ] [ EXIT FAR ]
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF23282E)),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // AUTO AE
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { RecordingManager.setExposureMode(0) }
+                                    .background(if (exposureMode == 0 && !isAeLocked) Color(0xFF0288D1) else Color.Transparent)
+                                    .padding(vertical = 6.dp)
+                                    .testTag("far_exposure_auto_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "AUTO AE",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                                    color = if (exposureMode == 0 && !isAeLocked) Color.White else Color.Gray
+                                )
+                            }
+
+                            // MANUAL EV
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { RecordingManager.setExposureMode(1) }
+                                    .background(if (exposureMode == 1) Color(0xFFFFD54F) else Color.Transparent)
+                                    .padding(vertical = 6.dp)
+                                    .testTag("far_exposure_manual_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "MANUAL EV",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                                    color = if (exposureMode == 1) Color.Black else Color.White
+                                )
+                            }
+
+                            // AE LOCK
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { RecordingManager.toggleAeLock() }
+                                    .background(if (isAeLocked) Color(0xFFFF8F00) else Color.Transparent)
+                                    .padding(vertical = 6.dp)
+                                    .testTag("far_ae_lock_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (isAeLocked) "LOCKED 🔒" else "AE LOCK",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                                    color = if (isAeLocked) Color.White else Color.Gray
+                                )
+                            }
+
+                            // EXIT FAR ONLY
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { RecordingManager.setFarFocusOnly(false) }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "EXIT FAR",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 10.sp),
+                                    color = Color.White.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+
+                        // FINE-TUNING STEPPERS ROW: [-0.5 EV] [-0.1 EV] [EV Badge] [+0.1 EV] [+0.5 EV]
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF2C3238),
+                                modifier = Modifier
+                                    .clickable { RecordingManager.stepExposureEv(-0.5f) }
+                                    .testTag("far_step_minus_large")
+                            ) {
+                                Text(
+                                    text = "-0.5 EV",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 9.sp),
+                                    color = Color(0xFFFFD54F),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF2C3238),
+                                modifier = Modifier
+                                    .clickable { RecordingManager.stepExposureEv(-0.1f) }
+                                    .testTag("far_step_minus_small")
+                            ) {
+                                Text(
+                                    text = "-0.1 EV",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 9.sp),
+                                    color = Color(0xFFFFD54F),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                )
+                            }
+
+                            // Center EV Readout
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = when {
+                                    isAeLocked -> Color(0xFFFF6F00)
+                                    exposureMode == 1 -> Color(0xFFFFD54F)
+                                    else -> Color(0xFF0288D1)
+                                }
+                            ) {
+                                Text(
+                                    text = when {
+                                        isAeLocked -> "LOCKED 🔒"
+                                        exposureMode == 1 -> String.format(if (exposureEvValue > 0) "+%.1f EV" else "%.1f EV", exposureEvValue)
+                                        else -> "AUTO AE"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold, fontSize = 10.sp),
+                                    color = if (exposureMode == 1 && !isAeLocked) Color.Black else Color.White,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF2C3238),
+                                modifier = Modifier
+                                    .clickable { RecordingManager.stepExposureEv(0.1f) }
+                                    .testTag("far_step_plus_small")
+                            ) {
+                                Text(
+                                    text = "+0.1 EV",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 9.sp),
+                                    color = Color(0xFFFFD54F),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF2C3238),
+                                modifier = Modifier
+                                    .clickable { RecordingManager.stepExposureEv(0.5f) }
+                                    .testTag("far_step_plus_large")
+                            ) {
+                                Text(
+                                    text = "+0.5 EV",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 9.sp),
+                                    color = Color(0xFFFFD54F),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        // CONTINUOUS MANUAL EV SLIDER
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp)
+                        ) {
+                            Text(
+                                text = "-2 EV",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 9.sp),
+                                color = Color(0xFFFFD54F),
+                                modifier = Modifier.clickable {
+                                    RecordingManager.stepExposureEv(-0.5f)
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Slider(
+                                value = exposureCompensation,
+                                onValueChange = { RecordingManager.setExposureCompensation(it) },
+                                valueRange = -1f..1f,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color(0xFFFFD54F),
+                                    activeTrackColor = Color(0xFFFFD54F),
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("far_exposure_slider")
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "+2 EV",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 9.sp),
+                                color = Color(0xFFFFD54F),
+                                modifier = Modifier.clickable {
+                                    RecordingManager.stepExposureEv(0.5f)
+                                }
+                            )
+                        }
+
+                        // QUICK DISTANT SCENE PRESETS
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val presets = listOf(
+                                Triple("☁️ Sky (-1 EV)", -0.5f, "far_preset_sky"),
+                                Triple("🌄 Sunset (-0.5)", -0.25f, "far_preset_sunset"),
+                                Triple("⚖️ Normal (0 EV)", 0.0f, "far_preset_normal"),
+                                Triple("🌲 Shadows (+0.5)", 0.25f, "far_preset_shadows"),
+                                Triple("🌃 Night (+1 EV)", 0.5f, "far_preset_night")
+                            )
+                            for ((label, value, tag) in presets) {
+                                val isSelected = exposureMode == 1 && kotlin.math.abs(exposureCompensation - value) < 0.13f
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (isSelected) Color(0xFFFFD54F) else Color(0xFF2B3037),
+                                    modifier = Modifier
+                                        .clickable { RecordingManager.setExposurePreset(value) }
+                                        .testTag(tag)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 8.5.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        ),
+                                        color = if (isSelected) Color.Black else Color(0xFFDDDDDD),
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Tap-to-expose hint
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "💡 Swipe ↕ on preview to adjust EV • Tap to spot-meter • Focus locked to infinity",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                            color = Color(0xFF81D4FA).copy(alpha = 0.9f)
+                        )
+                    }
+                }
+            } else {
+                // NORMAL FOCUS & EXPOSURE CONTROLS
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(
-                        text = "FAR ONLY",
-                        modifier = Modifier
-                            .clickable { RecordingManager.toggleFarFocusOnly() }
-                            .background(if (isFarFocusOnly) Color(0xFF0288D1) else Color.Transparent)
-                            .padding(horizontal = 6.dp, vertical = 6.dp)
-                            .testTag("far_focus_toggle_button"),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
-                        color = if (isFarFocusOnly) Color.White else Color(0xFF81D4FA)
+                        text = if (isFocusLocked) "FOCUS: LOCKED (Tap to Auto)" else afStatusText,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (isFocusLocked) Color(0xFFFFD54F)
+                        else if (isPersonMoving) Color(0xFF00E5FF)
+                        else if (trackedPerson != null) Color(0xFFFFD54F)
+                        else Color.White,
+                        modifier = Modifier.clickable {
+                            if (isFocusLocked) {
+                                RecordingManager.toggleFocusLock()
+                            } else {
+                                RecordingManager.humanTracker.toggleHumanAf()
+                            }
+                        }
                     )
-                    Text(
-                        text = "NIGHT",
-                        modifier = Modifier
-                            .clickable { RecordingManager.toggleNightMode() }
-                            .background(if (isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
-                            .padding(horizontal = 6.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
-                        color = if (isNightModeEnabled) Color.Black else Color.White
-                    )
-                    Text(
-                        text = "AUTO EV",
-                        modifier = Modifier
-                            .clickable { RecordingManager.setExposureMode(0) }
-                            .background(if (exposureMode == 0 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
-                            .padding(horizontal = 6.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
-                        color = if (exposureMode == 0 && !isNightModeEnabled) Color.Black else Color.White
-                    )
-                    Text(
-                        text = "MANUAL",
-                        modifier = Modifier
-                            .clickable { RecordingManager.setExposureMode(1) }
-                            .background(if (exposureMode == 1 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
-                            .padding(horizontal = 6.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
-                        color = if (exposureMode == 1 && !isNightModeEnabled) Color.Black else Color.White
+                    
+                    Row(
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF222222)),
+                    ) {
+                        val afButtonText = when (afMode) {
+                            com.example.camera.AutoFocusMode.HUMAN_PRIORITY -> "HUMAN AF"
+                            com.example.camera.AutoFocusMode.MOTION_TRACKING -> "MOTION AF"
+                            com.example.camera.AutoFocusMode.STANDARD_AUTO -> "AF OFF"
+                        }
+                        val afButtonBg = when (afMode) {
+                            com.example.camera.AutoFocusMode.HUMAN_PRIORITY -> Color(0xFF2E7D32)
+                            com.example.camera.AutoFocusMode.MOTION_TRACKING -> Color(0xFF00838F)
+                            com.example.camera.AutoFocusMode.STANDARD_AUTO -> Color.Transparent
+                        }
+                        Text(
+                            text = afButtonText,
+                            modifier = Modifier
+                                .clickable { RecordingManager.humanTracker.cycleAfMode() }
+                                .background(afButtonBg)
+                                .padding(horizontal = 6.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                            color = if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) Color.White else Color.Gray
+                        )
+                        Text(
+                            text = "FAR ONLY",
+                            modifier = Modifier
+                                .clickable { RecordingManager.toggleFarFocusOnly() }
+                                .background(Color.Transparent)
+                                .padding(horizontal = 6.dp, vertical = 6.dp)
+                                .testTag("far_focus_toggle_button"),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                            color = Color(0xFF81D4FA)
+                        )
+                        Text(
+                            text = "NIGHT",
+                            modifier = Modifier
+                                .clickable { RecordingManager.toggleNightMode() }
+                                .background(if (isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
+                                .padding(horizontal = 6.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                            color = if (isNightModeEnabled) Color.Black else Color.White
+                        )
+                        Text(
+                            text = "AUTO EV",
+                            modifier = Modifier
+                                .clickable { RecordingManager.setExposureMode(0) }
+                                .background(if (exposureMode == 0 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
+                                .padding(horizontal = 6.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                            color = if (exposureMode == 0 && !isNightModeEnabled) Color.Black else Color.White
+                        )
+                        Text(
+                            text = "MANUAL",
+                            modifier = Modifier
+                                .clickable { RecordingManager.setExposureMode(1) }
+                                .background(if (exposureMode == 1 && !isNightModeEnabled) Color(0xFFFFD54F) else Color.Transparent)
+                                .padding(horizontal = 6.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                            color = if (exposureMode == 1 && !isNightModeEnabled) Color.Black else Color.White
+                        )
+                    }
+                }
+
+                AnimatedVisibility(visible = exposureMode == 1) {
+                    Slider(
+                        value = exposureCompensation,
+                        onValueChange = { RecordingManager.setExposureCompensation(it) },
+                        valueRange = -1f..1f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFFFFD54F),
+                            activeTrackColor = Color(0xFFFFD54F),
+                            inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                        ),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                     )
                 }
-            }
-
-            AnimatedVisibility(visible = exposureMode == 1) {
-                Slider(
-                    value = exposureCompensation,
-                    onValueChange = { RecordingManager.setExposureCompensation(it) },
-                    valueRange = -1f..1f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFFFFD54F),
-                        activeTrackColor = Color(0xFFFFD54F),
-                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                    ),
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                )
             }
         }
 

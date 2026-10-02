@@ -42,6 +42,9 @@ fun HomeScreen(
     val recordingState by RecordingManager.recordingState.collectAsState()
     val duration by RecordingManager.recordingDurationMs.collectAsState()
     val isNightMode by RecordingManager.nightModeEnabled.collectAsState()
+    val isFarFocusOnly by RecordingManager.isFarFocusOnly.collectAsState()
+    val exposureCompensation by RecordingManager.exposureCompensation.collectAsState()
+    val exposureEvValue by RecordingManager.exposureEvValue.collectAsState()
     val isDualFormat by RecordingManager.dualFormatEnabled.collectAsState()
     val isProcessingDual by RecordingManager.isProcessingDualFormat.collectAsState()
     val isRecording = recordingState == RecordingState.RECORDING
@@ -448,24 +451,131 @@ fun HomeScreen(
                     }
                 }
 
+                // Far Only Mode Exposure Adjustment Card (when Far Focus Only is active)
+                AnimatedVisibility(visible = isFarFocusOnly) {
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Landscape,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        "Far Only Exposure",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Text(
+                                        text = String.format("%+.1f EV", exposureEvValue),
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            // Steppers row
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilledTonalButton(
+                                    onClick = { RecordingManager.stepExposureEv(-0.5f) },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("-0.5 EV", fontSize = 10.sp)
+                                }
+                                FilledTonalButton(
+                                    onClick = { RecordingManager.stepExposureEv(-0.1f) },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("-0.1 EV", fontSize = 10.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = { RecordingManager.resetExposure() },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("Reset", fontSize = 10.sp)
+                                }
+                                FilledTonalButton(
+                                    onClick = { RecordingManager.stepExposureEv(0.1f) },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("+0.1 EV", fontSize = 10.sp)
+                                }
+                                FilledTonalButton(
+                                    onClick = { RecordingManager.stepExposureEv(0.5f) },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("+0.5 EV", fontSize = 10.sp)
+                                }
+                            }
+
+                            Slider(
+                                value = exposureCompensation,
+                                onValueChange = { RecordingManager.setExposureCompensation(it) },
+                                valueRange = -1f..1f,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("dashboard_far_exposure_slider")
+                            )
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Switch Camera Lens
+                    // Far Focus Only Toggle
                     OutlinedButton(
-                        onClick = { RecordingManager.toggleCamera() },
-                        enabled = recordingState == RecordingState.IDLE,
+                        onClick = { RecordingManager.toggleFarFocusOnly() },
                         modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 4.dp)
-                            .testTag("switch_camera_button"),
-                        shape = RoundedCornerShape(14.dp)
+                            .weight(1.1f)
+                            .padding(end = 3.dp)
+                            .testTag("dashboard_far_only_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = if (isFarFocusOnly) {
+                            ButtonDefaults.outlinedButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        } else {
+                            ButtonDefaults.outlinedButtonColors()
+                        }
                     ) {
-                        Icon(Icons.Default.Cameraswitch, contentDescription = "Switch Camera", modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Flip", maxLines = 1, fontSize = 12.sp)
+                        Icon(Icons.Default.Landscape, contentDescription = "Far Only", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(if (isFarFocusOnly) "Far ON" else "Far", maxLines = 1, fontSize = 11.sp)
                     }
 
                     // Night Mode Toggle (Optimized for Moto Edge 50 Fusion sensor)
@@ -473,7 +583,7 @@ fun HomeScreen(
                         onClick = { RecordingManager.toggleNightMode() },
                         modifier = Modifier
                             .weight(1.1f)
-                            .padding(horizontal = 4.dp)
+                            .padding(horizontal = 3.dp)
                             .testTag("night_mode_button"),
                         shape = RoundedCornerShape(14.dp),
                         colors = if (isNightMode) {
@@ -488,38 +598,53 @@ fun HomeScreen(
                         Icon(
                             if (isNightMode) Icons.Default.Bedtime else Icons.Outlined.Bedtime,
                             contentDescription = "Night Mode",
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(if (isNightMode) "Night ON" else "Night", maxLines = 1, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(if (isNightMode) "Night ON" else "Night", maxLines = 1, fontSize = 11.sp)
                     }
 
                     // Flash / Torch Toggle
                     OutlinedButton(
                         onClick = { RecordingManager.toggleTorch() },
                         modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 4.dp)
+                            .weight(0.9f)
+                            .padding(horizontal = 3.dp)
                             .testTag("flash_button"),
                         shape = RoundedCornerShape(14.dp)
                     ) {
-                        Icon(Icons.Default.FlashlightOn, contentDescription = "Flash", modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Flash", maxLines = 1, fontSize = 12.sp)
+                        Icon(Icons.Default.FlashlightOn, contentDescription = "Flash", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Flash", maxLines = 1, fontSize = 11.sp)
+                    }
+
+                    // Switch Camera Lens
+                    OutlinedButton(
+                        onClick = { RecordingManager.toggleCamera() },
+                        enabled = recordingState == RecordingState.IDLE,
+                        modifier = Modifier
+                            .weight(0.9f)
+                            .padding(horizontal = 3.dp)
+                            .testTag("switch_camera_button"),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.Cameraswitch, contentDescription = "Switch Camera", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Flip", maxLines = 1, fontSize = 11.sp)
                     }
 
                     // Recordings Gallery
                     Button(
                         onClick = onNavigateToRecordings,
                         modifier = Modifier
-                            .weight(1.1f)
-                            .padding(start = 4.dp)
+                            .weight(1f)
+                            .padding(start = 3.dp)
                             .testTag("recordings_button"),
                         shape = RoundedCornerShape(14.dp)
                     ) {
-                        Icon(Icons.Default.VideoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Videos", maxLines = 1, fontSize = 12.sp)
+                        Icon(Icons.Default.VideoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Videos", maxLines = 1, fontSize = 11.sp)
                     }
                 }
             }
