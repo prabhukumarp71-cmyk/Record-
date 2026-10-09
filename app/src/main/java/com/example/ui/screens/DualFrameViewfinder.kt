@@ -327,476 +327,200 @@ fun DualFrameViewfinder(
             }
         }
 
-        // Viewport Stack: 9:16 (Top) + 16:9 (Bottom)
-        Column(
+        // Main Viewport (Clean Single Default Viewfinder - 16:9 format)
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // TOP FRAME: 9:16 Vertical Portrait Frame
-            Box(
-                modifier = Modifier
-                    .weight(1.35f)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, Color(0xFF333333), RoundedCornerShape(12.dp))
-                    .background(Color(0xFF121212))
-                    .pointerInput(isFarFocusOnly) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            val startX = down.position.x
-                            val startY = down.position.y
-                            var isDrag = false
-                            var currentY = startY
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .border(1.dp, Color(0xFF333333), RoundedCornerShape(16.dp))
+                .background(Color(0xFF121212))
+                .pointerInput(isFarFocusOnly) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val startX = down.position.x
+                        val startY = down.position.y
+                        var isDrag = false
+                        var currentY = startY
 
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!change.pressed) {
-                                    if (!isDrag) {
-                                        val normX = (startX / size.width.toFloat()).coerceIn(0f, 1f)
-                                        val normY = (startY / size.height.toFloat()).coerceIn(0f, 1f)
-                                        RecordingManager.focusAtPoint(normX, normY)
-                                    } else {
-                                        floatingDismissJob?.cancel()
-                                        floatingDismissJob = coroutineScope.launch {
-                                            delay(1800)
-                                            showFloatingExposureIndicator = false
-                                        }
-                                    }
-                                    break
-                                }
-                                val dy = change.position.y - currentY
-                                if (!isDrag && (kotlin.math.abs(change.position.y - startY) > 12f || kotlin.math.abs(change.position.x - startX) > 12f)) {
-                                    if (isFarFocusOnly && kotlin.math.abs(change.position.y - startY) > kotlin.math.abs(change.position.x - startX)) {
-                                        isDrag = true
-                                    }
-                                }
-                                if (isDrag) {
-                                    change.consume()
-                                    onDragExposure(dy)
-                                }
-                                currentY = change.position.y
-                            }
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                // CameraX PreviewView (9:16 native portrait)
-                AndroidView(
-                    factory = { ctx ->
-                        val frameLayout = FrameLayout(ctx)
-                        val pv = PreviewView(ctx).apply {
-                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                            scaleType = PreviewView.ScaleType.FILL_CENTER
-                            layoutParams = FrameLayout.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                        }
-                        previewViewRef = pv
-                        frameLayout.addView(pv)
-
-                        RecordingManager.setSurfaceProvider(pv.surfaceProvider)
-
-                        // Attach mirror once texture view is available
-                        pv.post {
-                            val textureView = (0 until pv.childCount)
-                                .mapNotNull { pv.getChildAt(it) as? TextureView }
-                                .firstOrNull()
-                            textureView?.let { tv ->
-                                mirrorViewRef?.startMirroring(tv)
-                            }
-                            RecordingManager.humanTracker.setMeteringPointFactory(pv.meteringPointFactory)
-                        }
-
-                        frameLayout
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Real-time Human / Motion Autofocus Target Reticles & Far AE Metering Reticle
-                if ((afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO || isFarFocusOnly || tapMeterPoint != null) && !isFocusLocked) {
-                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                        for (person in allDetectedPersons) {
-                            val isPrimary = person.id == trackedPerson?.id
-                            val left = person.bounds.left * size.width
-                            val top = person.bounds.top * size.height
-                            val right = person.bounds.right * size.width
-                            val bottom = person.bounds.bottom * size.height
-                            val boxWidth = (right - left).coerceAtLeast(10f)
-                            val boxHeight = (bottom - top).coerceAtLeast(10f)
-
-                            val boxColor = if (isFarFocusOnly) {
-                                if (person.isNear) {
-                                    Color.White.copy(alpha = 0.20f) // Near person ignored
-                                } else if (isPrimary) {
-                                    Color(0xFF00E5FF) // Distant target focused
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) {
+                                if (!isDrag) {
+                                    val normX = (startX / size.width.toFloat()).coerceIn(0f, 1f)
+                                    val normY = (startY / size.height.toFloat()).coerceIn(0f, 1f)
+                                    RecordingManager.focusAtPoint(normX, normY)
                                 } else {
-                                    Color(0xFFFFD54F).copy(alpha = 0.6f)
+                                    floatingDismissJob?.cancel()
+                                    floatingDismissJob = coroutineScope.launch {
+                                        delay(1800)
+                                        showFloatingExposureIndicator = false
+                                    }
                                 }
-                            } else if (isPrimary) {
-                                if (person.isMoving) Color(0xFF00E5FF) else Color(0xFFFFD54F)
-                            } else {
-                                Color.White.copy(alpha = 0.35f)
+                                break
                             }
-
-                            val strokeWidth = if (isFarFocusOnly && person.isNear) 1.dp.toPx()
-                            else if (isPrimary) 2.5.dp.toPx()
-                            else 1.2.dp.toPx()
-
-                            val cornerLength = (minOf(boxWidth, boxHeight) * 0.28f).coerceIn(10.dp.toPx(), 26.dp.toPx())
-
-                            // Draw high-precision corner brackets
-                            // Top-Left
-                            drawLine(boxColor, Offset(left, top), Offset(left + cornerLength, top), strokeWidth)
-                            drawLine(boxColor, Offset(left, top), Offset(left, top + cornerLength), strokeWidth)
-                            // Top-Right
-                            drawLine(boxColor, Offset(right, top), Offset(right - cornerLength, top), strokeWidth)
-                            drawLine(boxColor, Offset(right, top), Offset(right, top + cornerLength), strokeWidth)
-                            // Bottom-Left
-                            drawLine(boxColor, Offset(left, bottom), Offset(left + cornerLength, bottom), strokeWidth)
-                            drawLine(boxColor, Offset(left, bottom), Offset(left, bottom - cornerLength), strokeWidth)
-                            // Bottom-Right
-                            drawLine(boxColor, Offset(right, bottom), Offset(right - cornerLength, bottom), strokeWidth)
-                            drawLine(boxColor, Offset(right, bottom), Offset(right, bottom - cornerLength), strokeWidth)
-
-                            if (isPrimary && (!isFarFocusOnly || !person.isNear)) {
-                                val cx = (left + right) / 2f
-                                val cy = (top + bottom) / 2f
-                                drawCircle(boxColor.copy(alpha = 0.85f), radius = 3.5.dp.toPx(), center = Offset(cx, cy))
+                            val dy = change.position.y - currentY
+                            if (!isDrag && (kotlin.math.abs(change.position.y - startY) > 12f || kotlin.math.abs(change.position.x - startX) > 12f)) {
+                                if (isFarFocusOnly && kotlin.math.abs(change.position.y - startY) > kotlin.math.abs(change.position.x - startX)) {
+                                    isDrag = true
+                                }
                             }
-                        }
-
-                        // Also draw motion target reticle if motion is active and not already focused on a moving person
-                        val motion = trackedMotionTarget
-                        if (motion != null && (!isFarFocusOnly || !motion.isNear) && (trackedPerson == null || !isPersonMoving)) {
-                            val left = motion.bounds.left * size.width
-                            val top = motion.bounds.top * size.height
-                            val right = motion.bounds.right * size.width
-                            val bottom = motion.bounds.bottom * size.height
-                            val boxWidth = (right - left).coerceAtLeast(10f)
-                            val boxHeight = (bottom - top).coerceAtLeast(10f)
-                            val mColor = Color(0xFF00E5FF)
-                            val strokeWidth = 2.dp.toPx()
-                            val cornerLength = (minOf(boxWidth, boxHeight) * 0.25f).coerceIn(8.dp.toPx(), 22.dp.toPx())
-
-                            // Top-Left
-                            drawLine(mColor, Offset(left, top), Offset(left + cornerLength, top), strokeWidth)
-                            drawLine(mColor, Offset(left, top), Offset(left, top + cornerLength), strokeWidth)
-                            // Top-Right
-                            drawLine(mColor, Offset(right, top), Offset(right - cornerLength, top), strokeWidth)
-                            drawLine(mColor, Offset(right, top), Offset(right, top + cornerLength), strokeWidth)
-                            // Bottom-Left
-                            drawLine(mColor, Offset(left, bottom), Offset(left + cornerLength, bottom), strokeWidth)
-                            drawLine(mColor, Offset(left, bottom), Offset(left, bottom - cornerLength), strokeWidth)
-                            // Bottom-Right
-                            drawLine(mColor, Offset(right, bottom), Offset(right - cornerLength, bottom), strokeWidth)
-                            drawLine(mColor, Offset(right, bottom), Offset(right, bottom - cornerLength), strokeWidth)
-
-                            val cx = motion.centerX * size.width
-                            val cy = motion.centerY * size.height
-                            drawCircle(mColor.copy(alpha = 0.9f), radius = 4.dp.toPx(), center = Offset(cx, cy))
-                        }
-
-                        // Draw Tap-to-Meter AE Reticle in Far Only Mode
-                        if (isFarFocusOnly && tapMeterPoint != null) {
-                            val tx = tapMeterPoint!!.first * size.width
-                            val ty = tapMeterPoint!!.second * size.height
-                            val ringRadius = 24.dp.toPx()
-                            val sunColor = Color(0xFFFFD54F)
-
-                            // Outer ring
-                            drawCircle(
-                                color = sunColor,
-                                radius = ringRadius,
-                                center = Offset(tx, ty),
-                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
-                            )
-                            // Inner center point
-                            drawCircle(
-                                color = sunColor,
-                                radius = 4.dp.toPx(),
-                                center = Offset(tx, ty)
-                            )
-                            // 4 cardinal sun rays
-                            val rayLen = 7.dp.toPx()
-                            val gap = ringRadius + 3.dp.toPx()
-                            drawLine(sunColor, Offset(tx, ty - gap), Offset(tx, ty - gap - rayLen), strokeWidth = 2.dp.toPx())
-                            drawLine(sunColor, Offset(tx, ty + gap), Offset(tx, ty + gap + rayLen), strokeWidth = 2.dp.toPx())
-                            drawLine(sunColor, Offset(tx - gap, ty), Offset(tx - gap - rayLen, ty), strokeWidth = 2.dp.toPx())
-                            drawLine(sunColor, Offset(tx + gap, ty), Offset(tx + gap + rayLen, ty), strokeWidth = 2.dp.toPx())
+                            if (isDrag) {
+                                change.consume()
+                                onDragExposure(dy)
+                            }
+                            currentY = change.position.y
                         }
                     }
-                }
-
-                // Top-Left Badges: "9:16" + Dynamic AF Status + Far Exposure Badges
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color.Black.copy(alpha = 0.65f)
-                    ) {
-                        Text(
-                            text = "9:16",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp),
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            // CameraX PreviewView (Default Single Viewfinder)
+            AndroidView(
+                factory = { ctx ->
+                    val frameLayout = FrameLayout(ctx)
+                    val pv = PreviewView(ctx).apply {
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        layoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
                         )
                     }
+                    previewViewRef = pv
+                    frameLayout.addView(pv)
 
-                    if (isFarFocusOnly) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0xFF0277BD).copy(alpha = 0.9f)
-                        ) {
-                            Text(
-                                text = "🏔️ FAR ONLY",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
+                    RecordingManager.setSurfaceProvider(pv.surfaceProvider)
+
+                    pv.post {
+                        RecordingManager.humanTracker.setMeteringPointFactory(pv.meteringPointFactory)
+                    }
+
+                    frameLayout
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // Real-time Human / Motion Autofocus Target Reticles & Far AE Metering Reticle
+            if ((afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO || isFarFocusOnly || tapMeterPoint != null) && !isFocusLocked) {
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                    for (person in allDetectedPersons) {
+                        val isPrimary = person.id == trackedPerson?.id
+                        val left = person.bounds.left * size.width
+                        val top = person.bounds.top * size.height
+                        val right = person.bounds.right * size.width
+                        val bottom = person.bounds.bottom * size.height
+                        val boxWidth = (right - left).coerceAtLeast(10f)
+                        val boxHeight = (bottom - top).coerceAtLeast(10f)
+
+                        val boxColor = if (isFarFocusOnly) {
+                            if (person.isNear) {
+                                Color.White.copy(alpha = 0.20f) // Near person ignored
+                            } else if (isPrimary) {
+                                Color(0xFF00E5FF) // Distant target focused
+                            } else {
+                                Color(0xFFFFD54F).copy(alpha = 0.6f)
+                            }
+                        } else if (isPrimary) {
+                            if (person.isMoving) Color(0xFF00E5FF) else Color(0xFFFFD54F)
+                        } else {
+                            Color.White.copy(alpha = 0.35f)
                         }
 
-                        if (isAeLocked) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFFFF6F00).copy(alpha = 0.95f)
-                            ) {
-                                Text(
-                                    text = "🔒 AE LOCKED",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                                    color = Color.White,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        } else if (exposureMode == 1) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFFFFD54F)
-                            ) {
-                                Text(
-                                    text = String.format(if (exposureEvValue > 0) "+%.1f EV" else "%.1f EV", exposureEvValue),
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                                    color = Color.Black,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
-                    } else if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) {
-                        val hasMotion = isPersonMoving || isMotionActive
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (hasMotion) Color(0xFF006064).copy(alpha = 0.85f)
-                            else if (trackedPerson != null) Color(0xFFE65100).copy(alpha = 0.85f)
-                            else Color.Black.copy(alpha = 0.65f)
-                        ) {
-                            Text(
-                                text = if (hasMotion) "🏃 MOTION AF" else if (trackedPerson != null) "👤 HUMAN AF" else "👁 SCANNING",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                                color = if (hasMotion) Color(0xFF80DEEA) else if (trackedPerson != null) Color(0xFFFFE082) else Color.White.copy(alpha = 0.7f),
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
+                        val strokeWidth = if (isFarFocusOnly && person.isNear) 1.dp.toPx()
+                        else if (isPrimary) 2.5.dp.toPx()
+                        else 1.2.dp.toPx()
+
+                        val cornerLength = (minOf(boxWidth, boxHeight) * 0.28f).coerceIn(10.dp.toPx(), 26.dp.toPx())
+
+                        // Draw high-precision corner brackets
+                        // Top-Left
+                        drawLine(boxColor, Offset(left, top), Offset(left + cornerLength, top), strokeWidth)
+                        drawLine(boxColor, Offset(left, top), Offset(left, top + cornerLength), strokeWidth)
+                        // Top-Right
+                        drawLine(boxColor, Offset(right, top), Offset(right - cornerLength, top), strokeWidth)
+                        drawLine(boxColor, Offset(right, top), Offset(right, top + cornerLength), strokeWidth)
+                        // Bottom-Left
+                        drawLine(boxColor, Offset(left, bottom), Offset(left + cornerLength, bottom), strokeWidth)
+                        drawLine(boxColor, Offset(left, bottom), Offset(left, bottom - cornerLength), strokeWidth)
+                        // Bottom-Right
+                        drawLine(boxColor, Offset(right, bottom), Offset(right - cornerLength, bottom), strokeWidth)
+                        drawLine(boxColor, Offset(right, bottom), Offset(right, bottom - cornerLength), strokeWidth)
+
+                        if (isPrimary && (!isFarFocusOnly || !person.isNear)) {
+                            val cx = (left + right) / 2f
+                            val cy = (top + bottom) / 2f
+                            drawCircle(boxColor.copy(alpha = 0.85f), radius = 3.5.dp.toPx(), center = Offset(cx, cy))
                         }
                     }
-                }
 
-                // Top-Right Badge: "★ PRO" / "★ DUAL" (matching reference screenshot)
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFFE5A000),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(10.dp)
-                ) {
-                    Text(
-                        text = "★ DUAL",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold, fontSize = 11.sp),
-                        color = Color.Black,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
+                    // Motion target reticle
+                    val motion = trackedMotionTarget
+                    if (motion != null && (!isFarFocusOnly || !motion.isNear) && (trackedPerson == null || !isPersonMoving)) {
+                        val left = motion.bounds.left * size.width
+                        val top = motion.bounds.top * size.height
+                        val right = motion.bounds.right * size.width
+                        val bottom = motion.bounds.bottom * size.height
+                        val boxWidth = (right - left).coerceAtLeast(10f)
+                        val boxHeight = (bottom - top).coerceAtLeast(10f)
+                        val mColor = Color(0xFF00E5FF)
+                        val strokeWidth = 2.dp.toPx()
+                        val cornerLength = (minOf(boxWidth, boxHeight) * 0.25f).coerceIn(8.dp.toPx(), 22.dp.toPx())
 
-                // Left Floating Crop Tool Button [ ⯐ ] (cycles crop position for 16:9)
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.Black.copy(alpha = 0.65f),
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 10.dp)
-                        .clickable {
-                            RecordingManager.cycleCropPosition()
-                            mirrorViewRef?.cropPosition = RecordingManager.cropPosition.value
-                        }
-                        .testTag("crop_reframe_button")
-                ) {
-                    Icon(
-                        Icons.Default.Crop,
-                        contentDescription = "Reframe Crop Position",
-                        tint = Color(0xFFFFD54F),
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .size(20.dp)
-                    )
-                }
+                        drawLine(mColor, Offset(left, top), Offset(left + cornerLength, top), strokeWidth)
+                        drawLine(mColor, Offset(left, top), Offset(left, top + cornerLength), strokeWidth)
+                        drawLine(mColor, Offset(right, top), Offset(right - cornerLength, top), strokeWidth)
+                        drawLine(mColor, Offset(right, top), Offset(right, top + cornerLength), strokeWidth)
+                        drawLine(mColor, Offset(left, bottom), Offset(left + cornerLength, bottom), strokeWidth)
+                        drawLine(mColor, Offset(left, bottom), Offset(left, bottom - cornerLength), strokeWidth)
+                        drawLine(mColor, Offset(right, bottom), Offset(right - cornerLength, bottom), strokeWidth)
+                        drawLine(mColor, Offset(right, bottom), Offset(right, bottom - cornerLength), strokeWidth)
 
-                // Bottom Watermark: "Reframe" (matching reference screenshot)
-                Text(
-                    text = "Reframe",
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    ),
-                    color = Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 12.dp)
-                )
+                        val cx = motion.centerX * size.width
+                        val cy = motion.centerY * size.height
+                        drawCircle(mColor.copy(alpha = 0.9f), radius = 4.dp.toPx(), center = Offset(cx, cy))
+                    }
 
-                // Floating Exposure Indicator Overlay when swiping to adjust exposure in Far Only mode
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = showFloatingExposureIndicator && isFarFocusOnly,
-                    enter = fadeIn(tween(120)) + scaleIn(initialScale = 0.85f),
-                    exit = fadeOut(tween(250)) + scaleOut(targetScale = 0.85f),
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color.Black.copy(alpha = 0.82f),
-                        border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFFFD54F)),
-                        shadowElevation = 8.dp
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.WbSunny,
-                                    contentDescription = null,
-                                    tint = Color(0xFFFFD54F),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = String.format("%+.1f EV", exposureEvValue),
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
-                                    color = Color(0xFFFFD54F)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Box(
-                                modifier = Modifier
-                                    .width(84.dp)
-                                    .height(4.dp)
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(Color.White.copy(alpha = 0.25f))
-                            ) {
-                                val fillFrac = ((exposureCompensation + 1f) / 2f).coerceIn(0f, 1f)
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .fillMaxWidth(fraction = fillFrac)
-                                        .background(Color(0xFFFFD54F))
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(3.dp))
-                            Text(
-                                text = "Swipe ↕ to adjust EV",
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                color = Color.White.copy(alpha = 0.75f)
-                            )
-                        }
+                    // Draw Tap-to-Meter AE Reticle in Far Only Mode
+                    if (isFarFocusOnly && tapMeterPoint != null) {
+                        val tx = tapMeterPoint!!.first * size.width
+                        val ty = tapMeterPoint!!.second * size.height
+                        val ringRadius = 24.dp.toPx()
+                        val sunColor = Color(0xFFFFD54F)
+
+                        drawCircle(
+                            color = sunColor,
+                            radius = ringRadius,
+                            center = Offset(tx, ty),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                        )
+                        drawCircle(
+                            color = sunColor,
+                            radius = 4.dp.toPx(),
+                            center = Offset(tx, ty)
+                        )
+                        val rayLen = 7.dp.toPx()
+                        val gap = ringRadius + 3.dp.toPx()
+                        drawLine(sunColor, Offset(tx, ty - gap), Offset(tx, ty - gap - rayLen), strokeWidth = 2.dp.toPx())
+                        drawLine(sunColor, Offset(tx, ty + gap), Offset(tx, ty + gap - rayLen), strokeWidth = 2.dp.toPx())
+                        drawLine(sunColor, Offset(tx - gap, ty), Offset(tx - gap - rayLen, ty), strokeWidth = 2.dp.toPx())
+                        drawLine(sunColor, Offset(tx + gap, ty), Offset(tx + gap + rayLen, ty), strokeWidth = 2.dp.toPx())
                     }
                 }
             }
 
-            // BOTTOM FRAME: 16:9 Horizontal Widescreen Frame
-            Box(
+            // Top-Left Badges: Format 16:9 + Resolution / AF status
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, Color(0xFF333333), RoundedCornerShape(12.dp))
-                    .background(Color(0xFF121212))
-                    .pointerInput(isFarFocusOnly) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            val startX = down.position.x
-                            val startY = down.position.y
-                            var isDrag = false
-                            var currentY = startY
-
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!change.pressed) {
-                                    if (!isDrag) {
-                                        val normX = (startX / size.width.toFloat()).coerceIn(0f, 1f)
-                                        val normY = (startY / size.height.toFloat()).coerceIn(0f, 1f)
-                                        RecordingManager.focusAtPoint(normX, normY)
-                                    } else {
-                                        floatingDismissJob?.cancel()
-                                        floatingDismissJob = coroutineScope.launch {
-                                            delay(1800)
-                                            showFloatingExposureIndicator = false
-                                        }
-                                    }
-                                    break
-                                }
-                                val dy = change.position.y - currentY
-                                if (!isDrag && (kotlin.math.abs(change.position.y - startY) > 12f || kotlin.math.abs(change.position.x - startX) > 12f)) {
-                                    if (isFarFocusOnly && kotlin.math.abs(change.position.y - startY) > kotlin.math.abs(change.position.x - startX)) {
-                                        isDrag = true
-                                    }
-                                }
-                                if (isDrag) {
-                                    change.consume()
-                                    onDragExposure(dy)
-                                }
-                                currentY = change.position.y
-                            }
-                        }
-                    },
-                contentAlignment = Alignment.Center
+                    .align(Alignment.TopStart)
+                    .padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Live 16:9 Mirror View
-                AndroidView(
-                    factory = { ctx ->
-                        MirrorFrameView(ctx).apply {
-                            mirrorViewRef = this
-                            this.cropPosition = cropPos
-                            // If previewViewRef already has textureView, bind now
-                            previewViewRef?.let { pv ->
-                                val textureView = (0 until pv.childCount)
-                                    .mapNotNull { pv.getChildAt(it) as? TextureView }
-                                    .firstOrNull()
-                                textureView?.let { tv ->
-                                    startMirroring(tv)
-                                }
-                            }
-                        }
-                    },
-                    update = { view ->
-                        view.cropPosition = cropPos
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Bottom-Left Badge: "16:9" (matching reference screenshot)
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = Color.Black.copy(alpha = 0.65f),
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(10.dp)
+                    color = Color.Black.copy(alpha = 0.65f)
                 ) {
                     Text(
                         text = "16:9",
@@ -806,18 +530,126 @@ fun DualFrameViewfinder(
                     )
                 }
 
-                // Bottom-Right Watermark: "Reframe" (matching reference screenshot)
+                val currentQualityName by com.example.settings.AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
+                val qualityBadge = when (currentQualityName) {
+                    "ULTRA" -> "4K UHD • 3840×2160"
+                    "HIGH" -> "1080p FHD • 1920×1080"
+                    "MEDIUM" -> "720p HD"
+                    else -> "480p SD"
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF1E88E5).copy(alpha = 0.85f)
+                ) {
+                    Text(
+                        text = qualityBadge,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                if (isFarFocusOnly) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF0277BD).copy(alpha = 0.9f)
+                    ) {
+                        Text(
+                            text = "🏔️ FAR ONLY",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                } else if (afMode != com.example.camera.AutoFocusMode.STANDARD_AUTO) {
+                    val hasMotion = isPersonMoving || isMotionActive
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (hasMotion) Color(0xFF006064).copy(alpha = 0.85f)
+                        else if (trackedPerson != null) Color(0xFFE65100).copy(alpha = 0.85f)
+                        else Color.Black.copy(alpha = 0.65f)
+                    ) {
+                        Text(
+                            text = if (hasMotion) "🏃 MOTION AF" else if (trackedPerson != null) "👤 HUMAN AF" else "👁 SCANNING",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                            color = if (hasMotion) Color(0xFF80DEEA) else if (trackedPerson != null) Color(0xFFFFE082) else Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            // Top-Right Badge: Active FPS & Mode
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF263238).copy(alpha = 0.85f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+            ) {
                 Text(
-                    text = "Reframe",
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    ),
-                    color = Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 10.dp, end = 12.dp)
+                    text = "$targetFps FPS",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                    color = Color(0xFFFFD54F),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                 )
+            }
+
+            // Floating Exposure Indicator Overlay
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showFloatingExposureIndicator && isFarFocusOnly,
+                enter = fadeIn(tween(120)) + scaleIn(initialScale = 0.85f),
+                exit = fadeOut(tween(250)) + scaleOut(targetScale = 0.85f),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.Black.copy(alpha = 0.82f),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFFFD54F)),
+                    shadowElevation = 8.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.WbSunny,
+                                contentDescription = null,
+                                tint = Color(0xFFFFD54F),
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = String.format("%+.1f EV", exposureEvValue),
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                color = Color(0xFFFFD54F)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .width(84.dp)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(Color.White.copy(alpha = 0.25f))
+                        ) {
+                            val fillFrac = ((exposureCompensation + 1f) / 2f).coerceIn(0f, 1f)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(fraction = fillFrac)
+                                    .background(Color(0xFFFFD54F))
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = "Swipe ↕ to adjust EV",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                            color = Color.White.copy(alpha = 0.75f)
+                        )
+                    }
+                }
             }
         }
         
