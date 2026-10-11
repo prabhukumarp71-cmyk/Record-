@@ -13,7 +13,9 @@ data class VideoMedia(
     val size: Long,
     val dateAdded: Long,
     val formatType: VideoFormatType = VideoFormatType.UNKNOWN,
-    val companionUri: android.net.Uri? = null
+    val companionUri: android.net.Uri? = null,
+    val width: Int = 0,
+    val height: Int = 0
 )
 
 object MediaStoreHelper {
@@ -26,7 +28,9 @@ object MediaStoreHelper {
             MediaStore.Video.Media.DURATION,
             MediaStore.Video.Media.SIZE,
             MediaStore.Video.Media.DATE_ADDED,
-            MediaStore.Video.Media.RELATIVE_PATH
+            MediaStore.Video.Media.RELATIVE_PATH,
+            MediaStore.Video.Media.WIDTH,
+            MediaStore.Video.Media.HEIGHT
         )
         
         val selection = "${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?"
@@ -45,6 +49,8 @@ object MediaStoreHelper {
             val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
             val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
             val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
+            val widthColumn = cursor.getColumnIndex(MediaStore.Video.Media.WIDTH)
+            val heightColumn = cursor.getColumnIndex(MediaStore.Video.Media.HEIGHT)
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idColumn)
@@ -52,8 +58,24 @@ object MediaStoreHelper {
                 val duration = cursor.getLong(durationColumn)
                 val size = cursor.getLong(sizeColumn)
                 val date = cursor.getLong(dateColumn)
+                var width = if (widthColumn >= 0) cursor.getInt(widthColumn) else 0
+                var height = if (heightColumn >= 0) cursor.getInt(heightColumn) else 0
                 val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
                 val format = DualFormatVideoHelper.detectVideoFormat(context, uri, name)
+
+                if (width <= 0 || height <= 0) {
+                    try {
+                        val retriever = android.media.MediaMetadataRetriever()
+                        retriever.setDataSource(context, uri)
+                        val w = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                        val h = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                        retriever.release()
+                        width = w
+                        height = h
+                    } catch (e: Exception) {
+                        // ignore fallback error
+                    }
+                }
 
                 rawVideos.add(
                     VideoMedia(
@@ -62,7 +84,9 @@ object MediaStoreHelper {
                         duration = duration,
                         size = size,
                         dateAdded = date,
-                        formatType = format
+                        formatType = format,
+                        width = width,
+                        height = height
                     )
                 )
             }

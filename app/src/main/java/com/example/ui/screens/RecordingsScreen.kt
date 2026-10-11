@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -254,46 +255,69 @@ fun VideoItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Format Badge
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = when {
-                        isVertical -> MaterialTheme.colorScheme.primaryContainer
-                        isHorizontal -> MaterialTheme.colorScheme.secondaryContainer
-                        else -> MaterialTheme.colorScheme.tertiaryContainer
-                    }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Format Badge
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = when {
+                            isVertical -> MaterialTheme.colorScheme.primaryContainer
+                            isHorizontal -> MaterialTheme.colorScheme.secondaryContainer
+                            else -> MaterialTheme.colorScheme.tertiaryContainer
+                        }
                     ) {
-                        Icon(
-                            imageVector = when {
-                                isVertical -> Icons.Default.PhoneAndroid
-                                isHorizontal -> Icons.Default.Tv
-                                else -> Icons.Default.Videocam
-                            },
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                            tint = when {
-                                isVertical -> MaterialTheme.colorScheme.primary
-                                isHorizontal -> MaterialTheme.colorScheme.secondary
-                                else -> MaterialTheme.colorScheme.tertiary
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = when {
+                                    isVertical -> Icons.Default.PhoneAndroid
+                                    isHorizontal -> Icons.Default.Tv
+                                    else -> Icons.Default.Videocam
+                                },
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = when {
+                                    isVertical -> MaterialTheme.colorScheme.primary
+                                    isHorizontal -> MaterialTheme.colorScheme.secondary
+                                    else -> MaterialTheme.colorScheme.tertiary
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = when {
+                                    isVertical -> "Vertical (9:16)"
+                                    isHorizontal -> "Horizontal (16:9)"
+                                    else -> "Standard"
+                                },
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = when {
+                                    isVertical -> MaterialTheme.colorScheme.onPrimaryContainer
+                                    isHorizontal -> MaterialTheme.colorScheme.onSecondaryContainer
+                                    else -> MaterialTheme.colorScheme.onTertiaryContainer
+                                }
+                            )
+                        }
+                    }
+
+                    // Resolution Badge (1080p FHD, 4K UHD, 720p HD, etc.)
+                    val maxDim = maxOf(video.width, video.height)
+                    val resTag = when {
+                        maxDim >= 3800 -> "4K UHD"
+                        maxDim >= 1800 -> "1080p FHD"
+                        maxDim >= 1200 -> "720p HD"
+                        maxDim > 0 -> "480p SD"
+                        else -> "1080p"
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF1E88E5).copy(alpha = 0.2f)
+                    ) {
                         Text(
-                            text = when {
-                                isVertical -> "Vertical (9:16)"
-                                isHorizontal -> "Horizontal (16:9)"
-                                else -> "Standard"
-                            },
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = when {
-                                isVertical -> MaterialTheme.colorScheme.onPrimaryContainer
-                                isHorizontal -> MaterialTheme.colorScheme.onSecondaryContainer
-                                else -> MaterialTheme.colorScheme.onTertiaryContainer
-                            }
+                            text = resTag,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                            color = Color(0xFF1E88E5),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                         )
                     }
                 }
@@ -377,8 +401,9 @@ fun VideoItem(
                     val dateStr = SimpleDateFormat("MMM dd, yyyy • HH:mm", Locale.US).format(Date(video.dateAdded * 1000))
                     val durationStr = if (video.duration > 0) "${video.duration / 1000}s" else "<1s"
                     val sizeStr = Formatter.formatShortFileSize(context, video.size)
+                    val dimStr = if (video.width > 0 && video.height > 0) "${video.width}×${video.height} • " else ""
                     Text(
-                        text = "$dateStr • $durationStr • $sizeStr",
+                        text = "$dimStr$dateStr • $durationStr • $sizeStr",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline
                     )

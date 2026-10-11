@@ -97,6 +97,9 @@ object RecordingManager {
     private val _supportedFpsRanges = MutableStateFlow<List<Int>>(listOf(30))
     val supportedFpsRanges: StateFlow<List<Int>> = _supportedFpsRanges
 
+    private val _activeQualityDescription = MutableStateFlow("1080p FHD • 1920×1080")
+    val activeQualityDescription: StateFlow<String> = _activeQualityDescription
+
     val humanTracker = HumanAutofocusTracker()
 
     var previewUseCase: Preview? = null
@@ -112,9 +115,28 @@ object RecordingManager {
     private var currentLensFacing = CameraSelector.LENS_FACING_BACK
     private var currentLifecycleOwner: LifecycleOwner? = null
     private var currentContext: Context? = null
-    private var currentQuality: Quality = Quality.HD
+    private var currentQuality: Quality = Quality.FHD
     private var onFinalizeCallback: ((VideoRecordEvent.Finalize?) -> Unit)? = null
     private var currentRecordingDisplayName: String = ""
+
+    fun parseQuality(name: String): Quality {
+        return when (name.uppercase()) {
+            "ULTRA", "4K" -> Quality.UHD
+            "HIGH", "1080P", "FHD" -> Quality.FHD
+            "MEDIUM", "720P", "HD" -> Quality.HD
+            "LOW", "480P", "SD" -> Quality.SD
+            else -> Quality.FHD
+        }
+    }
+
+    fun setVideoQuality(quality: Quality) {
+        currentQuality = quality
+        val ctx = currentContext
+        val lifecycleOwner = currentLifecycleOwner
+        if (ctx != null && lifecycleOwner != null && _recordingState.value == RecordingState.IDLE) {
+            bindCamera(ctx, lifecycleOwner, currentLensFacing, quality)
+        }
+    }
 
     fun toggleDualFormat() {
         _dualFormatEnabled.value = !_dualFormatEnabled.value
@@ -181,26 +203,38 @@ object RecordingManager {
                     }
                 }
                 val supportedQualities: List<Quality> = videoCapabilities?.getSupportedQualities(DynamicRange.SDR) ?: emptyList()
+                Log.d(TAG, "Camera lens $lensFacing supported qualities: $supportedQualities, requested quality: $quality")
 
-                val targetQuality = when {
-                    supportedQualities.contains(quality) -> quality
-                    supportedQualities.contains(Quality.HD) -> Quality.HD
-                    supportedQualities.contains(Quality.SD) -> Quality.SD
-                    supportedQualities.isNotEmpty() -> supportedQualities.first()
-                    else -> Quality.SD
+                val prioritizedQualities = when (quality) {
+                    Quality.UHD -> listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD)
+                    Quality.FHD -> listOf(Quality.FHD, Quality.UHD, Quality.HD, Quality.SD)
+                    Quality.HD -> listOf(Quality.HD, Quality.FHD, Quality.SD)
+                    Quality.SD -> listOf(Quality.SD, Quality.HD)
+                    else -> listOf(Quality.FHD, Quality.HD, Quality.SD)
                 }
 
-                val qualitySelector = if (supportedQualities.isNotEmpty()) {
-                    QualitySelector.from(
-                        targetQuality,
-                        FallbackStrategy.lowerQualityOrHigherThan(Quality.LOWEST)
-                    )
+                val filteredQualities = if (supportedQualities.isNotEmpty()) {
+                    val matching = prioritizedQualities.filter { supportedQualities.contains(it) }
+                    if (matching.isNotEmpty()) matching else prioritizedQualities
                 } else {
-                    QualitySelector.fromOrderedList(
-                        listOf(Quality.SD, Quality.HD, Quality.LOWEST),
-                        FallbackStrategy.higherQualityOrLowerThan(Quality.LOWEST)
-                    )
+                    prioritizedQualities
                 }
+
+                val qualitySelector = QualitySelector.fromOrderedList(
+                    filteredQualities,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                )
+
+                val activeSelectedQuality = filteredQualities.firstOrNull() ?: Quality.FHD
+                val activeQualityBadge = when (activeSelectedQuality) {
+                    Quality.UHD -> "4K UHD • 3840×2160"
+                    Quality.FHD -> "1080p FHD • 1920×1080"
+                    Quality.HD -> "720p HD • 1280×720"
+                    Quality.SD -> "480p SD • 720×480"
+                    else -> "1080p FHD • 1920×1080"
+                }
+                _activeQualityDescription.value = activeQualityBadge
+                Log.d(TAG, "Configured quality selector for recording: activeQuality=$activeSelectedQuality ($activeQualityBadge)")
 
                 val recorder = Recorder.Builder()
                     .setQualitySelector(qualitySelector)
@@ -270,7 +304,9 @@ object RecordingManager {
                 videoCapture?.let { useCases.add(it) }
 
                 if (currentSurfaceProvider != null) {
-                    previewUseCase = Preview.Builder().build()
+                    previewUseCase = Preview.Builder()
+                        .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
+                        .build()
                     previewUseCase?.setSurfaceProvider(currentSurfaceProvider)
                     previewUseCase?.let { useCases.add(it) }
                 } else {

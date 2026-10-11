@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -246,14 +247,33 @@ fun SettingsScreen(
 
             Text("Recording Quality", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
             Spacer(modifier = Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                listOf("ULTRA", "HIGH", "MEDIUM", "LOW").forEach { q ->
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(
+                    "ULTRA" to "4K UHD (2160p • 3840×2160)",
+                    "HIGH" to "1080p FHD (Full HD • 1920×1080)",
+                    "MEDIUM" to "720p HD (High Definition • 1280×720)",
+                    "LOW" to "480p SD (Standard • 720×480)"
+                ).forEach { (q, label) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                coroutineScope.launch { AppSettings.setVideoQuality(context, q) }
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
                         RadioButton(
                             selected = quality == q,
                             onClick = { coroutineScope.launch { AppSettings.setVideoQuality(context, q) } }
                         )
-                        Text(q)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = if (quality == q) FontWeight.Bold else FontWeight.Normal
+                            )
+                        )
                     }
                 }
             }

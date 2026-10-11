@@ -15,13 +15,16 @@ fun CameraPreviewView(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val recordingState by RecordingManager.recordingState.collectAsState()
+    val qualityName by com.example.settings.AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
-    LaunchedEffect(recordingState, lifecycleOwner) {
+    LaunchedEffect(recordingState, lifecycleOwner, qualityName) {
         if (recordingState == RecordingState.IDLE) {
+            val quality = RecordingManager.parseQuality(qualityName)
             RecordingManager.bindCamera(
                 context = context,
-                lifecycleOwner = lifecycleOwner
+                lifecycleOwner = lifecycleOwner,
+                quality = quality
             )
         }
     }

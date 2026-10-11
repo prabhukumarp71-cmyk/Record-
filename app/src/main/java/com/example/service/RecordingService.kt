@@ -77,7 +77,8 @@ class RecordingService : LifecycleService() {
                 startForeground(NOTIFICATION_ID, notification)
             }
 
-            val quality = androidx.camera.video.Quality.HIGHEST
+            val qualityName = AppSettings.getVideoQuality(this@RecordingService).first()
+            val quality = RecordingManager.parseQuality(qualityName)
 
             RecordingManager.bindCamera(
                 context = this@RecordingService,

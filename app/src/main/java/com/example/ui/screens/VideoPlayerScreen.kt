@@ -41,6 +41,29 @@ fun VideoPlayerScreen(
 
     val isVertical = formatType == VideoFormatType.VERTICAL
 
+    var videoResolution by remember(activeUriStr) { mutableStateOf("") }
+    LaunchedEffect(activeUriStr) {
+        try {
+            val retriever = android.media.MediaMetadataRetriever()
+            retriever.setDataSource(context, Uri.parse(activeUriStr))
+            val w = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            val h = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            retriever.release()
+            if (w > 0 && h > 0) {
+                val maxDim = maxOf(w, h)
+                val label = when {
+                    maxDim >= 3800 -> "4K UHD"
+                    maxDim >= 1800 -> "1080p FHD"
+                    maxDim >= 1200 -> "720p HD"
+                    else -> "480p SD"
+                }
+                videoResolution = "$w×$h ($label)"
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
             playWhenReady = true
@@ -63,7 +86,7 @@ fun VideoPlayerScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = if (isVertical) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer
@@ -83,6 +106,20 @@ fun VideoPlayerScreen(
                                     text = if (isVertical) "Vertical (9:16)" else "Horizontal (16:9)",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                     color = if (isVertical) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+
+                        if (videoResolution.isNotEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.tertiaryContainer
+                            ) {
+                                Text(
+                                    text = videoResolution,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
                         }

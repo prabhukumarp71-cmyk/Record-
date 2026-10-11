@@ -191,13 +191,16 @@ fun DualFrameViewfinder(
     }
 
     val targetFps by com.example.settings.AppSettings.getTargetFps(context).collectAsState(initial = 30)
+    val currentQualityName by com.example.settings.AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
 
-    LaunchedEffect(recordingState, lifecycleOwner, targetFps) {
+    LaunchedEffect(recordingState, lifecycleOwner, targetFps, currentQualityName) {
         if (recordingState == RecordingState.IDLE) {
+            val quality = RecordingManager.parseQuality(currentQualityName)
             RecordingManager.setTargetFps(targetFps)
             RecordingManager.bindCamera(
                 context = context,
-                lifecycleOwner = lifecycleOwner
+                lifecycleOwner = lifecycleOwner,
+                quality = quality
             )
         }
     }
@@ -530,19 +533,26 @@ fun DualFrameViewfinder(
                     )
                 }
 
-                val currentQualityName by com.example.settings.AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
-                val qualityBadge = when (currentQualityName) {
-                    "ULTRA" -> "4K UHD • 3840×2160"
-                    "HIGH" -> "1080p FHD • 1920×1080"
-                    "MEDIUM" -> "720p HD"
-                    else -> "480p SD"
-                }
+                val activeQualityDesc by RecordingManager.activeQualityDescription.collectAsState()
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF1E88E5).copy(alpha = 0.85f)
+                    color = Color(0xFF1E88E5).copy(alpha = 0.85f),
+                    modifier = Modifier
+                        .clickable(enabled = !isRecording && !isStarting && !isStopping) {
+                            val next = when (currentQualityName) {
+                                "HIGH" -> "ULTRA"
+                                "ULTRA" -> "MEDIUM"
+                                "MEDIUM" -> "LOW"
+                                else -> "HIGH"
+                            }
+                            coroutineScope.launch {
+                                com.example.settings.AppSettings.setVideoQuality(context, next)
+                            }
+                        }
+                        .testTag("quality_selector_chip")
                 ) {
                     Text(
-                        text = qualityBadge,
+                        text = activeQualityDesc,
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
                         color = Color.White,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
