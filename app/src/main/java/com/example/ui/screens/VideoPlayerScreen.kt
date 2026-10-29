@@ -53,11 +53,11 @@ fun VideoPlayerScreen(
                 val maxDim = maxOf(w, h)
                 val label = when {
                     maxDim >= 3800 -> "4K UHD"
-                    maxDim >= 1800 -> "1080p FHD"
+                    maxDim >= 1800 -> if (isVertical) "1080×1920p FHD" else "1920×1080p FHD"
                     maxDim >= 1200 -> "720p HD"
                     else -> "480p SD"
                 }
-                videoResolution = "$w×$h ($label)"
+                videoResolution = "$w×${h}p • $label"
             }
         } catch (e: Exception) {
             // ignore

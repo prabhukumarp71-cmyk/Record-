@@ -118,6 +118,8 @@ object RecordingManager {
     private var currentQuality: Quality = Quality.FHD
     private var onFinalizeCallback: ((VideoRecordEvent.Finalize?) -> Unit)? = null
     private var currentRecordingDisplayName: String = ""
+    private var currentRawRecordingFile: java.io.File? = null
+    private var currentRecordingBaseName: String = ""
 
     fun parseQuality(name: String): Quality {
         return when (name.uppercase()) {
@@ -205,42 +207,56 @@ object RecordingManager {
                 val supportedQualities: List<Quality> = videoCapabilities?.getSupportedQualities(DynamicRange.SDR) ?: emptyList()
                 Log.d(TAG, "Camera lens $lensFacing supported qualities: $supportedQualities, requested quality: $quality")
 
-                val prioritizedQualities = when (quality) {
-                    Quality.UHD -> listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD)
-                    Quality.FHD -> listOf(Quality.FHD, Quality.UHD, Quality.HD, Quality.SD)
-                    Quality.HD -> listOf(Quality.HD, Quality.FHD, Quality.SD)
-                    Quality.SD -> listOf(Quality.SD, Quality.HD)
-                    else -> listOf(Quality.FHD, Quality.HD, Quality.SD)
+                // Build robust quality selector ensuring 1080p FHD is given absolute top priority
+                val qualitySelector = when (quality) {
+                    Quality.UHD -> QualitySelector.fromOrderedList(
+                        listOf(Quality.UHD, Quality.FHD, Quality.HD),
+                        FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
+                    )
+                    Quality.FHD -> QualitySelector.fromOrderedList(
+                        listOf(Quality.FHD, Quality.HD),
+                        FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
+                    )
+                    Quality.HD -> QualitySelector.fromOrderedList(
+                        listOf(Quality.HD, Quality.SD),
+                        FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                    )
+                    Quality.SD -> QualitySelector.from(
+                        Quality.SD,
+                        FallbackStrategy.higherQualityOrLowerThan(Quality.SD)
+                    )
+                    else -> QualitySelector.fromOrderedList(
+                        listOf(Quality.FHD, Quality.HD),
+                        FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
+                    )
                 }
 
-                val filteredQualities = if (supportedQualities.isNotEmpty()) {
-                    val matching = prioritizedQualities.filter { supportedQualities.contains(it) }
-                    if (matching.isNotEmpty()) matching else prioritizedQualities
-                } else {
-                    prioritizedQualities
-                }
-
-                val qualitySelector = QualitySelector.fromOrderedList(
-                    filteredQualities,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
-                )
-
-                val activeSelectedQuality = filteredQualities.firstOrNull() ?: Quality.FHD
-                val activeQualityBadge = when (activeSelectedQuality) {
+                _activeQualityDescription.value = when (quality) {
                     Quality.UHD -> "4K UHD • 3840×2160"
                     Quality.FHD -> "1080p FHD • 1920×1080"
                     Quality.HD -> "720p HD • 1280×720"
                     Quality.SD -> "480p SD • 720×480"
                     else -> "1080p FHD • 1920×1080"
                 }
-                _activeQualityDescription.value = activeQualityBadge
-                Log.d(TAG, "Configured quality selector for recording: activeQuality=$activeSelectedQuality ($activeQualityBadge)")
+                Log.d(TAG, "Configured quality selector for recording: requested=$quality, target=${_activeQualityDescription.value}")
 
                 val recorder = Recorder.Builder()
                     .setQualitySelector(qualitySelector)
                     .build()
 
                 val videoCaptureBuilder = VideoCapture.Builder(recorder)
+                try {
+                    val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
+                    val rotation = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        context.display?.rotation ?: android.view.Surface.ROTATION_0
+                    } else {
+                        @Suppress("DEPRECATION")
+                        windowManager?.defaultDisplay?.rotation ?: android.view.Surface.ROTATION_0
+                    }
+                    videoCaptureBuilder.setTargetRotation(rotation)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not set targetRotation: ${e.message}")
+                }
                 val camera2Extender = Camera2Interop.Extender(videoCaptureBuilder)
 
                 // If Far Focus Only is enabled, lock lens to far distance / infinity (0.0 diopters) and turn off near AF sweeps
@@ -318,6 +334,7 @@ object RecordingManager {
                 val imageAnalysis = androidx.camera.core.ImageAnalysis.Builder()
                     .setBackpressureStrategy(androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setOutputImageFormat(androidx.camera.core.ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                    .setTargetResolution(android.util.Size(640, 480))
                     .build()
                 imageAnalysis.setAnalyzer(humanTracker.executor, humanTracker.createAnalyzer(isFront))
                 useCases.add(imageAnalysis)
@@ -658,25 +675,17 @@ object RecordingManager {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
         val isDual = _dualFormatEnabled.value
         val baseName = "VID_$timestamp"
-        val name = if (isDual) "${baseName}_Vertical" else baseName
-        currentRecordingDisplayName = name
-        
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/BackgroundRecorder")
-        }
+        currentRecordingBaseName = baseName
+        currentRecordingDisplayName = if (isDual) "${baseName}_Vertical" else baseName
 
-        val mediaStoreOutputOptions = MediaStoreOutputOptions.Builder(
-            context.contentResolver,
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        )
-            .setContentValues(contentValues)
-            .build()
+        val rawRecordingFile = java.io.File(context.cacheDir, "camera_raw_${System.currentTimeMillis()}.mp4")
+        currentRawRecordingFile = rawRecordingFile
+
+        val fileOutputOptions = FileOutputOptions.Builder(rawRecordingFile).build()
 
         _recordingState.value = RecordingState.STARTING
         
-        var pendingRecording = capture.output.prepareRecording(context, mediaStoreOutputOptions)
+        var pendingRecording = capture.output.prepareRecording(context, fileOutputOptions)
         val hasAudioPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (audioEnabled && hasAudioPermission) {
             pendingRecording = pendingRecording.withAudioEnabled()
@@ -697,29 +706,37 @@ object RecordingManager {
                     _recordingDurationMs.value = recordEvent.recordingStats.recordedDurationNanos / 1000000L
                 }
                 is VideoRecordEvent.Finalize -> {
-                    if (!recordEvent.hasError() && recordEvent.outputResults.outputUri != android.net.Uri.EMPTY && isDual) {
+                    val rawFile = currentRawRecordingFile
+                    val base = currentRecordingBaseName
+                    if (!recordEvent.hasError() && rawFile != null && rawFile.exists() && rawFile.length() > 0L) {
                         _recordingState.value = RecordingState.STOPPING
                         _isProcessingDualFormat.value = true
                         CoroutineScope(Dispatchers.IO).launch {
                             try {
-                                val companionUri = DualFormatVideoHelper.generateCompanionFormat(
+                                val result = DualFormatVideoHelper.processAndSaveRecording(
                                     context = context.applicationContext,
-                                    sourceUri = recordEvent.outputResults.outputUri,
-                                    originalDisplayName = "$name.mp4",
-                                    cropPosition = _cropPosition.value
+                                    rawFile = rawFile,
+                                    baseName = base,
+                                    isDual = isDual,
+                                    cropPosition = _cropPosition.value,
+                                    targetQuality = currentQuality
                                 )
+
                                 withContext(Dispatchers.Main) {
                                     _isProcessingDualFormat.value = false
                                     _recordingState.value = RecordingState.IDLE
                                     _recordingDurationMs.value = 0L
-                                    if (companionUri != null) {
-                                        Toast.makeText(context, "✅ Recorded in both Vertical & Horizontal formats!", Toast.LENGTH_SHORT).show()
+                                    val msg = if (result.companionUri != null) {
+                                        "✅ Saved in 1920×1080p (Vertical & Horizontal)!"
+                                    } else {
+                                        "✅ Saved in 1920×1080p FHD!"
                                     }
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                     onFinalizeCallback?.invoke(recordEvent)
                                     onFinalizeCallback = null
                                 }
                             } catch (e: Exception) {
-                                Log.e(TAG, "Failed dual format generation", e)
+                                Log.e(TAG, "Failed video post-processing", e)
                                 withContext(Dispatchers.Main) {
                                     _isProcessingDualFormat.value = false
                                     _recordingState.value = RecordingState.IDLE
@@ -727,6 +744,11 @@ object RecordingManager {
                                     onFinalizeCallback?.invoke(recordEvent)
                                     onFinalizeCallback = null
                                 }
+                            } finally {
+                                if (rawFile.exists()) {
+                                    rawFile.delete()
+                                }
+                                currentRawRecordingFile = null
                             }
                         }
                     } else {
@@ -735,6 +757,10 @@ object RecordingManager {
                         if (recordEvent.hasError()) {
                             Log.w(TAG, "Video capture finalized with code: ${recordEvent.error}")
                         }
+                        if (rawFile != null && rawFile.exists()) {
+                            rawFile.delete()
+                        }
+                        currentRawRecordingFile = null
                         onFinalizeCallback?.invoke(recordEvent)
                         onFinalizeCallback = null
                     }

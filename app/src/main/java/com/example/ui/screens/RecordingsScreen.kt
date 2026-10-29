@@ -300,14 +300,14 @@ fun VideoItem(
                         }
                     }
 
-                    // Resolution Badge (1080p FHD, 4K UHD, 720p HD, etc.)
+                    // Resolution Badge (1920x1080p FHD, 4K UHD, etc.)
                     val maxDim = maxOf(video.width, video.height)
                     val resTag = when {
                         maxDim >= 3800 -> "4K UHD"
-                        maxDim >= 1800 -> "1080p FHD"
+                        maxDim >= 1800 -> if (isVertical) "1080×1920p FHD" else "1920×1080p FHD"
                         maxDim >= 1200 -> "720p HD"
                         maxDim > 0 -> "480p SD"
-                        else -> "1080p"
+                        else -> if (isVertical) "1080×1920p" else "1920×1080p"
                     }
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -401,7 +401,7 @@ fun VideoItem(
                     val dateStr = SimpleDateFormat("MMM dd, yyyy • HH:mm", Locale.US).format(Date(video.dateAdded * 1000))
                     val durationStr = if (video.duration > 0) "${video.duration / 1000}s" else "<1s"
                     val sizeStr = Formatter.formatShortFileSize(context, video.size)
-                    val dimStr = if (video.width > 0 && video.height > 0) "${video.width}×${video.height} • " else ""
+                    val dimStr = if (video.width > 0 && video.height > 0) "${video.width}×${video.height}p • " else if (isVertical) "1080×1920p • " else "1920×1080p • "
                     Text(
                         text = "$dimStr$dateStr • $durationStr • $sizeStr",
                         style = MaterialTheme.typography.bodySmall,
