@@ -1,27 +1,76 @@
 package com.example.ui.screens
 
+import android.content.Context
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.ViewCarousel
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.unit.sp
 import com.example.camera.EmergencyKeyManager
 import com.example.camera.RecordingManager
 import com.example.settings.AppSettings
 import kotlinx.coroutines.launch
+
+data class ResolutionOption(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val isRecommended: Boolean = false
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,39 +78,58 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    val scrollState = rememberScrollState()
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
-    val quality by AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
-    val audioEnabled by AppSettings.isAudioEnabled(context).collectAsState(initial = true)
-    val dualFormatEnabled by AppSettings.isDualFormatEnabled(context).collectAsState(initial = true)
+    val currentQuality by AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
+    val isAudioEnabled by AppSettings.isAudioEnabled(context).collectAsState(initial = true)
+    val isDualFormatEnabled by AppSettings.isDualFormatEnabled(context).collectAsState(initial = true)
+    val targetFps by AppSettings.getTargetFps(context).collectAsState(initial = 30)
 
-    var isAccessibilityEnabled by remember {
-        mutableStateOf(EmergencyKeyManager.isAccessibilityServiceEnabled(context))
+    var isAccessibilityEnabled by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        isAccessibilityEnabled = EmergencyKeyManager.isAccessibilityServiceEnabled(context)
     }
 
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                isAccessibilityEnabled = EmergencyKeyManager.isAccessibilityServiceEnabled(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
+    val resolutions = listOf(
+        ResolutionOption(
+            key = "HIGH",
+            title = "1080p FHD (1920×1080)",
+            subtitle = "Recommended • 20 Mbps Moto Crisp • Razor Sharp",
+            isRecommended = true
+        ),
+        ResolutionOption(
+            key = "ULTRA",
+            title = "4K UHD (3840×2160)",
+            subtitle = "Master Quality • 50 Mbps Moto Tuned • Maximum Detail"
+        ),
+        ResolutionOption(
+            key = "MEDIUM",
+            title = "720p HD (1280×720)",
+            subtitle = "Standard Quality • 14 Mbps Moto • Balanced Storage"
+        ),
+        ResolutionOption(
+            key = "LOW",
+            title = "480p SD (720×480)",
+            subtitle = "Space Saver • 8 Mbps"
+        )
+    )
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text("Settings", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
             )
         }
     ) { padding ->
@@ -69,274 +137,336 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(scrollState)
-                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Emergency Trigger Card
+            // Video Resolution Section
             Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
-                ),
-                shape = MaterialTheme.shapes.large,
-                modifier = Modifier.fillMaxWidth()
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Emergency,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            "Emergency Key Recording",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        "Hold both Volume Up and Volume Down buttons simultaneously for 4 seconds to start emergency background video recording (confirmed with 2 vibration pulses). While recording, hold both keys for 2 seconds to stop and save the video (confirmed with 1 vibration pulse).",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "System-wide Background Trigger",
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
-                            )
-                            Text(
-                                if (isAccessibilityEnabled) "Active (triggers anywhere/locked)" else "Disabled (in-app only)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (isAccessibilityEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                            )
-                        }
-
-                        if (!isAccessibilityEnabled) {
-                            FilledTonalButton(
-                                onClick = { EmergencyKeyManager.openAccessibilitySettings(context) },
-                                modifier = Modifier.testTag("enable_accessibility_button")
-                            ) {
-                                Text("Enable")
-                            }
-                        } else {
-                            AssistChip(
-                                onClick = { },
-                                label = { Text("Enabled") },
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    OutlinedButton(
-                        onClick = { EmergencyKeyManager.vibrateEmergency(context) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Vibration, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Test Emergency Vibration Pattern")
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Simultaneous Dual-Format Recording Card
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                ),
-                shape = MaterialTheme.shapes.large,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Icon(
-                                Icons.Default.Layers,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    "Simultaneous Dual Formats",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    "Vertical (9:16) & Horizontal (16:9)",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-
-                        Switch(
-                            checked = dualFormatEnabled,
-                            onCheckedChange = { isEnabled ->
-                                coroutineScope.launch {
-                                    AppSettings.setDualFormatEnabled(context, isEnabled)
-                                    RecordingManager.setDualFormatEnabled(isEnabled)
-                                }
-                            },
-                            modifier = Modifier.testTag("dual_format_settings_switch")
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        "When enabled, every background recording produces both Vertical (9:16 portrait) and Horizontal (16:9 landscape) video files simultaneously.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.PhoneAndroid, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Vertical (9:16)", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                            }
-                            Text("Mobile feeds, Shorts, Reels & Stories", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Tv, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Horizontal (16:9)", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                            }
-                            Text("Widescreen, Desktop, TV & YouTube", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Text("Recording Quality", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
-            Spacer(modifier = Modifier.height(8.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(
-                    "ULTRA" to "4K UHD (2160p • 3840×2160)",
-                    "HIGH" to "1080p FHD (Full HD • 1920×1080)",
-                    "MEDIUM" to "720p HD (High Definition • 1280×720)",
-                    "LOW" to "480p SD (Standard • 720×480)"
-                ).forEach { (q, label) ->
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                coroutineScope.launch { AppSettings.setVideoQuality(context, q) }
-                            }
-                            .padding(vertical = 4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        RadioButton(
-                            selected = quality == q,
-                            onClick = { coroutineScope.launch { AppSettings.setVideoQuality(context, q) } }
+                        Icon(
+                            imageVector = Icons.Default.HighQuality,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            label,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = if (quality == q) FontWeight.Bold else FontWeight.Normal
-                            )
+                            text = "Video Resolution & Quality",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
                         )
                     }
-                }
-            }
 
-            val targetFps by AppSettings.getTargetFps(context).collectAsState(initial = 30)
-            val supportedFpsRanges by RecordingManager.supportedFpsRanges.collectAsState()
+                    Text(
+                        text = "Recorded directly with high-bitrate encoding to ensure maximum clarity and eliminate blurriness.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-            Spacer(modifier = Modifier.height(24.dp))
-            Text("Frame Rate (FPS)", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (supportedFpsRanges.isEmpty()) {
-                    Text("Loading options...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-                } else {
-                    supportedFpsRanges.forEach { fps ->
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 8.dp)) {
-                            RadioButton(
-                                selected = targetFps == fps,
-                                onClick = { 
-                                    coroutineScope.launch { AppSettings.setTargetFps(context, fps) }
-                                    RecordingManager.setTargetFps(fps) 
+                    resolutions.forEach { option ->
+                        val isSelected = currentQuality.equals(option.key, ignoreCase = true)
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    scope.launch {
+                                        AppSettings.setVideoQuality(context, option.key)
+                                        RecordingManager.setVideoQuality(RecordingManager.parseQuality(option.key))
+                                    }
+                                },
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isSelected) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surface
                                 }
-                            )
-                            Text("$fps FPS")
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        scope.launch {
+                                            AppSettings.setVideoQuality(context, option.key)
+                                            RecordingManager.setVideoQuality(RecordingManager.parseQuality(option.key))
+                                        }
+                                    }
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = option.title,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                            fontSize = 15.sp
+                                        )
+                                        if (option.isRecommended) {
+                                            Text(
+                                                text = "BEST",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier
+                                                    .background(
+                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                        RoundedCornerShape(4.dp)
+                                                    )
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = option.subtitle,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text("Record Audio", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
-                Switch(
-                    checked = audioEnabled,
-                    onCheckedChange = { coroutineScope.launch { AppSettings.setAudioEnabled(context, it) } }
-                )
+            // Dual Format Output Section
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ViewCarousel,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column {
+                                Text(
+                                    text = "Dual-Format Output",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp
+                                )
+                                Text(
+                                    text = "Generates Vertical (9:16) & Horizontal (16:9) simultaneously",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = isDualFormatEnabled,
+                            onCheckedChange = { checked ->
+                                scope.launch {
+                                    AppSettings.setDualFormatEnabled(context, checked)
+                                    RecordingManager.setDualFormatEnabled(checked)
+                                }
+                            }
+                        )
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
+            // Target Framerate (FPS)
             Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.fillMaxWidth()
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Hardware Optimization",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Frame Rate (FPS)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        listOf(30, 60).forEach { fps ->
+                            val isSelected = targetFps == fps
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        AppSettings.setTargetFps(context, fps)
+                                        RecordingManager.setTargetFps(fps)
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("$fps FPS", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Audio Recording Toggle
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Column {
+                            Text(
+                                text = "Record Audio",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
+                            Text(
+                                text = "Include microphone sound in recordings",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = isAudioEnabled,
+                        onCheckedChange = { checked ->
+                            scope.launch {
+                                AppSettings.setAudioEnabled(context, checked)
+                            }
+                        }
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
+
+            // Emergency Volume Key Trigger
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VolumeUp,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Emergency Volume Key Trigger",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+
                     Text(
-                        "• Night Mode utilizes low-light dynamic exposure ranges (15-30 FPS) and AE compensation tailored to Moto Edge 50 Fusion's Sony LYT-700C sensor limits without frame dropping.\n• Notifications can be swiped away to clear your tray without interrupting background video recording.",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "Hold Volume Up + Down for 4s to silently start background recording with haptic vibration.",
+                        fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isAccessibilityEnabled) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = if (isAccessibilityEnabled) Color(0xFF00E676) else Color(0xFFFF9800)
+                        )
+                        Text(
+                            text = if (isAccessibilityEnabled) "Service is Active & Listening" else "Accessibility Permission Required",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = if (isAccessibilityEnabled) Color(0xFF00E676) else Color(0xFFFF9800)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                EmergencyKeyManager.openAccessibilitySettings(context)
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Open Settings")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                EmergencyKeyManager.vibrateStart(context)
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Test Vibration")
+                        }
+                    }
                 }
             }
         }
     }
 }
-

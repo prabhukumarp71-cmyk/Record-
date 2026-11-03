@@ -1,52 +1,55 @@
 package com.example
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
-import android.view.KeyEvent
+import androidx.core.content.ContextCompat
 import com.example.camera.EmergencyKeyManager
 import com.example.ui.AppNavigation
 import com.example.ui.theme.MyApplicationTheme
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.rememberMultiplePermissionsState
 
 class MainActivity : ComponentActivity() {
-    @OptIn(ExperimentalPermissionsApi::class)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
         setContent {
             MyApplicationTheme {
-                val permissions = mutableListOf(
-                    android.Manifest.permission.CAMERA,
-                    android.Manifest.permission.RECORD_AUDIO
-                )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    permissions.add(android.Manifest.permission.POST_NOTIFICATIONS)
-                    permissions.add(android.Manifest.permission.READ_MEDIA_VIDEO)
-                } else {
-                    permissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                val permissionsToRequest = buildList {
+                    add(Manifest.permission.CAMERA)
+                    add(Manifest.permission.RECORD_AUDIO)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        add(Manifest.permission.POST_NOTIFICATIONS)
+                    }
                 }
 
-                val permissionState = rememberMultiplePermissionsState(permissions)
+                val permissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestMultiplePermissions()
+                ) { _ -> }
 
                 LaunchedEffect(Unit) {
-                    if (!permissionState.allPermissionsGranted) {
-                        permissionState.launchMultiplePermissionRequest()
+                    val notGranted = permissionsToRequest.filter {
+                        ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
+                    }
+                    if (notGranted.isNotEmpty()) {
+                        permissionLauncher.launch(notGranted.toTypedArray())
                     }
                 }
 
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    if (permissionState.allPermissionsGranted) {
-                        AppNavigation()
-                    }
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    AppNavigation()
                 }
             }
         }

@@ -17,11 +17,13 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Crop
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
+import androidx.media3.transformer.VideoEncoderSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -42,14 +44,14 @@ data class ProcessedRecordingResult(
 object DualFormatVideoHelper {
     private const val TAG = "DualFormatVideoHelper"
 
-    private data class VideoMeta(
+    data class VideoMeta(
         val effectiveWidth: Int,
         val effectiveHeight: Int,
         val rotation: Int,
         val isVertical: Boolean
     )
 
-    private fun extractVideoMeta(context: Context, uri: Uri): VideoMeta {
+    fun extractVideoMeta(context: Context, uri: Uri): VideoMeta {
         return try {
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(context, uri)
@@ -72,7 +74,7 @@ object DualFormatVideoHelper {
         }
     }
 
-    private fun extractFileMeta(file: File): VideoMeta {
+    fun extractFileMeta(file: File): VideoMeta {
         return try {
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(file.absolutePath)
@@ -95,10 +97,6 @@ object DualFormatVideoHelper {
         }
     }
 
-    /**
-     * Determines whether a video is vertical or horizontal.
-     * Checks filename suffix first for instant resolution, falling back to MediaMetadataRetriever.
-     */
     fun detectVideoFormat(context: Context, uri: Uri, displayName: String? = null): VideoFormatType {
         val name = displayName ?: ""
         if (name.contains("Vertical", ignoreCase = true) || name.endsWith("_V.mp4", ignoreCase = true)) {
@@ -112,9 +110,6 @@ object DualFormatVideoHelper {
         return if (meta.isVertical) VideoFormatType.VERTICAL else VideoFormatType.HORIZONTAL
     }
 
-    /**
-     * Cleanly inserts a video file into MediaStore (Movies/BackgroundRecorder) with IS_PENDING handling.
-     */
     fun saveFileToMediaStore(context: Context, file: File, displayName: String): Uri? {
         if (!file.exists() || file.length() == 0L) {
             Log.e(TAG, "Cannot save empty or non-existent file: ${file.absolutePath}")
@@ -162,15 +157,14 @@ object DualFormatVideoHelper {
         }
     }
 
-    /**
-     * Executes Media3 Transformer to process/scale/crop video with given effects.
-     */
     @OptIn(UnstableApi::class)
     suspend fun transformVideo(
         context: Context,
         inputFile: File,
         outputFile: File,
-        effectsList: List<Effect>
+        effectsList: List<Effect>,
+        targetWidth: Int = 1920,
+        targetHeight: Int = 1080
     ): Boolean = withContext(Dispatchers.IO) {
         if (!inputFile.exists() || inputFile.length() == 0L) {
             Log.e(TAG, "Input file does not exist or is empty: ${inputFile.absolutePath}")
@@ -178,6 +172,14 @@ object DualFormatVideoHelper {
         }
         if (outputFile.exists()) {
             outputFile.delete()
+        }
+
+        // Motorola VideoHelper hardware bitrates:
+        val maxDim = maxOf(targetWidth, targetHeight)
+        val targetBitrate = when {
+            maxDim >= 3000 -> 50_000_000 // 0x2faf080 = 50 Mbps for 4K UHD Motorola Master
+            maxDim >= 1800 -> 20_000_000 // 0x1312d00 = 20 Mbps for 1080p FHD Motorola Crisp
+            else -> 14_000_000           // 0xd59f80  = 14 Mbps for 720p HD Motorola
         }
 
         try {
@@ -190,10 +192,23 @@ object DualFormatVideoHelper {
                             .setEffects(Effects(emptyList(), effectsList))
                             .build()
 
+                        val encoderSettings = VideoEncoderSettings.Builder()
+                            .setBitrate(targetBitrate)
+                            .setBitrateMode(android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+                            .experimentalSetEnableHighQualityTargeting(true)
+                            .build()
+
+                        val encoderFactory = DefaultEncoderFactory.Builder(context)
+                            .setRequestedVideoEncoderSettings(encoderSettings)
+                            .setEnableFallback(true)
+                            .build()
+
                         val transformer = Transformer.Builder(context)
+                            .setEncoderFactory(encoderFactory)
+                            .setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H265)
                             .addListener(object : Transformer.Listener {
                                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                                    Log.d(TAG, "Media3 export completed: bytes=${exportResult.fileSizeBytes}")
+                                    Log.d(TAG, "Media3 export completed: bytes=${exportResult.fileSizeBytes}, bitrate=$targetBitrate")
                                     if (continuation.isActive) continuation.resume(true)
                                 }
 
@@ -222,13 +237,6 @@ object DualFormatVideoHelper {
         }
     }
 
-    /**
-     * Primary entry point for newly completed camera recordings:
-     * 1. Inspects raw file dimensions.
-     * 2. Conforms resolution to guaranteed 1920×1080 (or 1080×1920) Full HD if camera hardware capped capture at 720p.
-     * 3. Generates complementary 1920×1080 companion format if Dual Format is enabled.
-     * 4. Saves fresh, finalized entries into MediaStore with zero Scoped Storage overwrite conflicts.
-     */
     @OptIn(UnstableApi::class)
     suspend fun processAndSaveRecording(
         context: Context,
@@ -247,7 +255,6 @@ object DualFormatVideoHelper {
         val isVertical = meta.isVertical
         Log.d(TAG, "Raw capture video: effective=${meta.effectiveWidth}x${meta.effectiveHeight}, rot=${meta.rotation}, isVertical=$isVertical")
 
-        // Target primary dimensions: default is guaranteed 1920x1080 FHD (or 1080x1920 vertical)
         val (targetPrimaryW, targetPrimaryH) = when (targetQuality) {
             Quality.UHD -> if (isVertical) Pair(2160, 3840) else Pair(3840, 2160)
             Quality.HD -> if (isVertical) Pair(720, 1280) else Pair(1280, 720)
@@ -262,16 +269,12 @@ object DualFormatVideoHelper {
             "${baseName}.mp4"
         }
 
-        val maxDim = maxOf(meta.effectiveWidth, meta.effectiveHeight)
-        // If user wants FHD (or UHD) and camera HAL capped capture at 720p or lower, conform to exact Full HD
-        val needsConform = (targetQuality == Quality.FHD || targetQuality == Quality.UHD) &&
-                (meta.effectiveWidth != targetPrimaryW || meta.effectiveHeight != targetPrimaryH)
-
+        val needsConform = (meta.effectiveWidth != targetPrimaryW || meta.effectiveHeight != targetPrimaryH)
         var primaryFileToSave = rawFile
         val tempPrimaryConformed = File(context.cacheDir, "fhd_primary_${System.currentTimeMillis()}.mp4")
 
         if (needsConform) {
-            Log.d(TAG, "Upscaling/conforming video from ${meta.effectiveWidth}x${meta.effectiveHeight} to guaranteed Full HD $targetPrimaryW x $targetPrimaryH...")
+            Log.d(TAG, "Upscaling/conforming video from ${meta.effectiveWidth}x${meta.effectiveHeight} to target $targetPrimaryW x $targetPrimaryH...")
             val effects = listOf<Effect>(
                 Presentation.createForWidthAndHeight(
                     targetPrimaryW,
@@ -279,9 +282,9 @@ object DualFormatVideoHelper {
                     Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
                 )
             )
-            val conformed = transformVideo(context, rawFile, tempPrimaryConformed, effects)
+            val conformed = transformVideo(context, rawFile, tempPrimaryConformed, effects, targetPrimaryW, targetPrimaryH)
             if (conformed && tempPrimaryConformed.exists() && tempPrimaryConformed.length() > 0L) {
-                Log.d(TAG, "Successfully conformed video to guaranteed $targetPrimaryW x $targetPrimaryH FHD!")
+                Log.d(TAG, "Successfully conformed video to $targetPrimaryW x $targetPrimaryH!")
                 primaryFileToSave = tempPrimaryConformed
             } else {
                 Log.w(TAG, "Primary conform failed; saving raw recording file")
@@ -291,14 +294,14 @@ object DualFormatVideoHelper {
 
         val primaryUri = saveFileToMediaStore(context, primaryFileToSave, primaryDisplayName)
 
-        // Generate companion video if Dual Format is enabled
         var companionUri: Uri? = null
         if (isDual) {
             val companionIsVertical = !isVertical
-            val (companionTargetW, companionTargetH) = if (companionIsVertical) {
-                Pair(1080, 1920)
-            } else {
-                Pair(1920, 1080)
+            val (companionTargetW, companionTargetH) = when (targetQuality) {
+                Quality.UHD -> if (companionIsVertical) Pair(2160, 3840) else Pair(3840, 2160)
+                Quality.HD -> if (companionIsVertical) Pair(720, 1280) else Pair(1280, 720)
+                Quality.SD -> if (companionIsVertical) Pair(480, 720) else Pair(720, 480)
+                else -> if (companionIsVertical) Pair(1080, 1920) else Pair(1920, 1080)
             }
 
             val companionSuffix = if (companionIsVertical) "_Vertical" else "_Horizontal"
@@ -308,7 +311,6 @@ object DualFormatVideoHelper {
             val companionEffects = mutableListOf<Effect>()
 
             if (!companionIsVertical) {
-                // Source is vertical -> create horizontal widescreen 1920x1080
                 if (cropPosition <= 0.3f) {
                     companionEffects.add(Crop(-1f, 1f, 0.2f, 0.8328f))
                 } else if (cropPosition >= 0.7f) {
@@ -316,23 +318,22 @@ object DualFormatVideoHelper {
                 }
                 companionEffects.add(
                     Presentation.createForWidthAndHeight(
-                        1920,
-                        1080,
+                        companionTargetW,
+                        companionTargetH,
                         Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
                     )
                 )
             } else {
-                // Source is horizontal -> create vertical portrait 1080x1920
                 companionEffects.add(
                     Presentation.createForWidthAndHeight(
-                        1080,
-                        1920,
+                        companionTargetW,
+                        companionTargetH,
                         Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
                     )
                 )
             }
 
-            val companionSuccess = transformVideo(context, primaryFileToSave, tempCompanion, companionEffects)
+            val companionSuccess = transformVideo(context, primaryFileToSave, tempCompanion, companionEffects, companionTargetW, companionTargetH)
             if (companionSuccess && tempCompanion.exists() && tempCompanion.length() > 0L) {
                 companionUri = saveFileToMediaStore(context, tempCompanion, companionDisplayName)
                 Log.d(TAG, "Successfully created and saved companion video: $companionUri ($companionDisplayName)")
@@ -348,11 +349,6 @@ object DualFormatVideoHelper {
         ProcessedRecordingResult(primaryUri, companionUri)
     }
 
-    /**
-     * Given an existing video URI (e.g. from RecordingsScreen), creates a genuine complementary video format:
-     * - 9:16 Vertical -> Real 16:9 Horizontal widescreen crop (1920x1080)
-     * - 16:9 Horizontal -> Real 9:16 Vertical portrait crop (1080x1920)
-     */
     @OptIn(UnstableApi::class)
     suspend fun generateCompanionFormat(
         context: Context,
@@ -372,7 +368,6 @@ object DualFormatVideoHelper {
         val tempOutput = File(context.cacheDir, "comp_out_${System.currentTimeMillis()}.mp4")
 
         try {
-            // Copy source video from MediaStore URI to local temp file
             context.contentResolver.openInputStream(sourceUri)?.use { input ->
                 tempInput.outputStream().use { output ->
                     input.copyTo(output)
@@ -382,6 +377,14 @@ object DualFormatVideoHelper {
                 return@withContext null
             }
 
+            val meta = extractFileMeta(tempInput)
+            val isTarget4K = meta.effectiveWidth >= 3000 || meta.effectiveHeight >= 3000
+            val (targetW, targetH) = if (targetFormat == VideoFormatType.HORIZONTAL) {
+                if (isTarget4K) Pair(3840, 2160) else Pair(1920, 1080)
+            } else {
+                if (isTarget4K) Pair(2160, 3840) else Pair(1080, 1920)
+            }
+
             val effectsList = mutableListOf<Effect>()
             if (targetFormat == VideoFormatType.HORIZONTAL) {
                 if (cropPosition <= 0.3f) {
@@ -389,12 +392,12 @@ object DualFormatVideoHelper {
                 } else if (cropPosition >= 0.7f) {
                     effectsList.add(Crop(-1f, 1f, -0.8328f, -0.2f))
                 }
-                effectsList.add(Presentation.createForWidthAndHeight(1920, 1080, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))
+                effectsList.add(Presentation.createForWidthAndHeight(targetW, targetH, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))
             } else {
-                effectsList.add(Presentation.createForWidthAndHeight(1080, 1920, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))
+                effectsList.add(Presentation.createForWidthAndHeight(targetW, targetH, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))
             }
 
-            val transformed = transformVideo(context, tempInput, tempOutput, effectsList)
+            val transformed = transformVideo(context, tempInput, tempOutput, effectsList, targetW, targetH)
             if (!transformed || !tempOutput.exists() || tempOutput.length() == 0L) {
                 Log.e(TAG, "Companion transformation failed")
                 return@withContext null
@@ -430,9 +433,6 @@ object DualFormatVideoHelper {
             .replace("_H", "")
     }
 
-    /**
-     * Backward-compatible helper for legacy callers.
-     */
     @OptIn(UnstableApi::class)
     suspend fun ensureFullHdResolution(
         context: Context,
@@ -457,9 +457,8 @@ object DualFormatVideoHelper {
             val effects = listOf<Effect>(
                 Presentation.createForWidthAndHeight(targetW, targetH, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
             )
-            val success = transformVideo(context, tempIn, tempOut, effects)
+            val success = transformVideo(context, tempIn, tempOut, effects, targetW, targetH)
             if (success && tempOut.exists() && tempOut.length() > 0L) {
-                // If possible, overwrite or copy
                 try {
                     context.contentResolver.openOutputStream(sourceUri, "rwt")?.use { out ->
                         tempOut.inputStream().use { input -> input.copyTo(out) }

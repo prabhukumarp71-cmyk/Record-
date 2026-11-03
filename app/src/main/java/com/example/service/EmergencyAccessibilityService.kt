@@ -8,6 +8,10 @@ import com.example.camera.EmergencyKeyManager
 
 class EmergencyAccessibilityService : AccessibilityService() {
 
+    companion object {
+        private const val TAG = "EmergencyAccessService"
+    }
+
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
             val handled = EmergencyKeyManager.onKeyEvent(this, event)
@@ -20,14 +24,10 @@ class EmergencyAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // No UI accessibility events needed; dedicated solely to hardware key event filtering
+        // No-op
     }
 
     override fun onInterrupt() {
         Log.d(TAG, "EmergencyAccessibilityService interrupted")
-    }
-
-    companion object {
-        private const val TAG = "EmergencyAccessService"
     }
 }

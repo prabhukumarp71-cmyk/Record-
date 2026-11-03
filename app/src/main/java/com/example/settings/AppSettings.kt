@@ -15,69 +15,68 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
 
 object AppSettings {
     val KEY_VIDEO_QUALITY = stringPreferencesKey("video_quality")
-    val KEY_CAMERA_LENS = intPreferencesKey("camera_lens")
     val KEY_AUDIO_ENABLED = booleanPreferencesKey("audio_enabled")
-    val KEY_FLASH_MODE = intPreferencesKey("flash_mode")
+    val KEY_CAMERA_LENS = stringPreferencesKey("camera_lens")
     val KEY_DUAL_FORMAT_ENABLED = booleanPreferencesKey("dual_format_enabled")
     val KEY_TARGET_FPS = intPreferencesKey("target_fps")
 
-    fun getTargetFps(context: Context): Flow<Int> {
-        return context.dataStore.data.map { prefs ->
-            prefs[KEY_TARGET_FPS] ?: 30
-        }
-    }
-
-    suspend fun setTargetFps(context: Context, fps: Int) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_TARGET_FPS] = fps
-        }
-    }
-
-    fun isDualFormatEnabled(context: Context): Flow<Boolean> {
-        return context.dataStore.data.map { prefs ->
-            prefs[KEY_DUAL_FORMAT_ENABLED] ?: true
-        }
-    }
-
-    suspend fun setDualFormatEnabled(context: Context, enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_DUAL_FORMAT_ENABLED] = enabled
-        }
-    }
-
     fun getVideoQuality(context: Context): Flow<String> {
-        return context.dataStore.data.map { prefs ->
-            prefs[KEY_VIDEO_QUALITY] ?: "HIGH" // ULTRA, HIGH, MEDIUM, LOW
+        return context.dataStore.data.map { preferences ->
+            preferences[KEY_VIDEO_QUALITY] ?: "HIGH"
         }
     }
 
     suspend fun setVideoQuality(context: Context, quality: String) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_VIDEO_QUALITY] = quality
-        }
-    }
-
-    fun getCameraLens(context: Context): Flow<Int> {
-        return context.dataStore.data.map { prefs ->
-            prefs[KEY_CAMERA_LENS] ?: androidx.camera.core.CameraSelector.LENS_FACING_BACK
-        }
-    }
-
-    suspend fun setCameraLens(context: Context, lens: Int) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_CAMERA_LENS] = lens
+        context.dataStore.edit { preferences ->
+            preferences[KEY_VIDEO_QUALITY] = quality
         }
     }
 
     fun isAudioEnabled(context: Context): Flow<Boolean> {
-        return context.dataStore.data.map { prefs ->
-            prefs[KEY_AUDIO_ENABLED] ?: true
+        return context.dataStore.data.map { preferences ->
+            preferences[KEY_AUDIO_ENABLED] ?: true
         }
     }
 
     suspend fun setAudioEnabled(context: Context, enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_AUDIO_ENABLED] = enabled
+        context.dataStore.edit { preferences ->
+            preferences[KEY_AUDIO_ENABLED] = enabled
+        }
+    }
+
+    fun getCameraLens(context: Context): Flow<String> {
+        return context.dataStore.data.map { preferences ->
+            preferences[KEY_CAMERA_LENS] ?: "BACK"
+        }
+    }
+
+    suspend fun setCameraLens(context: Context, lens: String) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_CAMERA_LENS] = lens
+        }
+    }
+
+    fun isDualFormatEnabled(context: Context): Flow<Boolean> {
+        return context.dataStore.data.map { preferences ->
+            preferences[KEY_DUAL_FORMAT_ENABLED] ?: true
+        }
+    }
+
+    suspend fun setDualFormatEnabled(context: Context, enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_DUAL_FORMAT_ENABLED] = enabled
+        }
+    }
+
+    fun getTargetFps(context: Context): Flow<Int> {
+        return context.dataStore.data.map { preferences ->
+            preferences[KEY_TARGET_FPS] ?: 30
+        }
+    }
+
+    suspend fun setTargetFps(context: Context, fps: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_TARGET_FPS] = fps
         }
     }
 }

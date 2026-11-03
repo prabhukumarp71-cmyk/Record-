@@ -1,24 +1,47 @@
 package com.example.ui.screens
 
 import android.content.Intent
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.ViewCarousel
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -28,626 +51,274 @@ import androidx.compose.ui.unit.sp
 import com.example.camera.RecordingManager
 import com.example.model.RecordingState
 import com.example.service.RecordingService
-import com.example.settings.AppSettings
-import kotlinx.coroutines.launch
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    onNavigateToRecordings: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToRecordings: () -> Unit
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
     val recordingState by RecordingManager.recordingState.collectAsState()
-    val duration by RecordingManager.recordingDurationMs.collectAsState()
-    val isNightMode by RecordingManager.nightModeEnabled.collectAsState()
-    val isFarFocusOnly by RecordingManager.isFarFocusOnly.collectAsState()
-    val exposureCompensation by RecordingManager.exposureCompensation.collectAsState()
-    val exposureEvValue by RecordingManager.exposureEvValue.collectAsState()
-    val isDualFormat by RecordingManager.dualFormatEnabled.collectAsState()
+    val recordingDurationMs by RecordingManager.recordingDurationMs.collectAsState()
     val isProcessingDual by RecordingManager.isProcessingDualFormat.collectAsState()
+    val dualFormatEnabled by RecordingManager.dualFormatEnabled.collectAsState()
+    val cropPosition by RecordingManager.cropPosition.collectAsState()
+
     val isRecording = recordingState == RecordingState.RECORDING
     val isPaused = recordingState == RecordingState.PAUSED
-    val isStarting = recordingState == RecordingState.STARTING
-    val isStopping = recordingState == RecordingState.STOPPING || isProcessingDual
+    val isBusy = isRecording || isPaused || recordingState == RecordingState.STARTING || recordingState == RecordingState.STOPPING
 
-    var isDualFrameView by remember { mutableStateOf(true) }
-
-    val onRecordToggle: () -> Unit = {
-        if (recordingState == RecordingState.IDLE) {
-            val intent = Intent(context, RecordingService::class.java).apply {
-                action = RecordingService.ACTION_START
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-        } else {
-            val intent = Intent(context, RecordingService::class.java).apply {
-                action = RecordingService.ACTION_STOP
-            }
-            context.startService(intent)
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        AppSettings.isDualFormatEnabled(context).collect { enabled ->
-            RecordingManager.setDualFormatEnabled(enabled)
-        }
-    }
-
-    if (isDualFrameView) {
-        DualFrameViewfinder(
-            onRecordToggle = onRecordToggle,
-            onNavigateToSettings = onNavigateToSettings,
-            onNavigateToRecordings = onNavigateToRecordings,
-            onToggleDashboardMode = { isDualFrameView = false }
-        )
-        return
-    }
-
-    // Pulse animation for recording state
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseScale"
-    )
+    val durationText = formatDuration(recordingDurationMs)
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Videocam,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(28.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            "Background Recorder",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(
-                        onClick = { isDualFrameView = true },
-                        modifier = Modifier.testTag("switch_to_dual_camera_button")
-                    ) {
-                        Icon(Icons.Default.FlipCameraAndroid, contentDescription = "Dual Frame Camera", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(
-                        onClick = onNavigateToSettings,
-                        modifier = Modifier.testTag("settings_button")
-                    ) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            )
-        }
-    ) { padding ->
-        Column(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = Color.Black
+    ) { innerPadding ->
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 24.dp, vertical = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+                .padding(innerPadding)
         ) {
-            // Status Header Card
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = when {
-                        isRecording -> MaterialTheme.colorScheme.errorContainer
-                        isPaused -> MaterialTheme.colorScheme.tertiaryContainer
-                        else -> MaterialTheme.colorScheme.surfaceVariant
-                    }
-                ),
+            // Main Viewfinder
+            DualFrameViewfinder(modifier = Modifier.fillMaxSize())
+
+            // Top Bar Controls
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp)
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
+                // Settings button
+                IconButton(
+                    onClick = onNavigateToSettings,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    when {
-                                        isRecording -> MaterialTheme.colorScheme.error
-                                        isPaused -> MaterialTheme.colorScheme.tertiary
-                                        else -> MaterialTheme.colorScheme.outline
-                                    }
-                                )
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = when {
-                                isStarting -> "Starting..."
-                                isProcessingDual -> "Saving dual formats..."
-                                isStopping -> "Saving recording..."
-                                isRecording -> if (isDualFormat) "Recording Dual Formats" else "Recording in background"
-                                isPaused -> "Recording paused"
-                                else -> if (isDualFormat) "Ready (Dual: Vertical & Horizontal)" else "Ready to record"
-                            },
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = when {
-                                isRecording -> MaterialTheme.colorScheme.onErrorContainer
-                                isPaused -> MaterialTheme.colorScheme.onTertiaryContainer
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                        )
-                    }
-
-                    if (isRecording || isPaused) {
-                        val seconds = duration / 1000
-                        val min = seconds / 60
-                        val sec = seconds % 60
-                        Text(
-                            text = String.format("%02d:%02d", min, sec),
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
-                            ),
-                            color = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
-                        )
-                    }
-                }
-            }
-
-            // Dual Format Simultaneous Recording Toggle Card
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (isDualFormat) {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-                    .clickable(enabled = !isRecording && !isPaused && !isStarting && !isStopping) {
-                        val next = !isDualFormat
-                        RecordingManager.setDualFormatEnabled(next)
-                        coroutineScope.launch {
-                            AppSettings.setDualFormatEnabled(context, next)
-                        }
-                    }
-                    .testTag("dual_format_card")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            Icons.Default.Layers,
-                            contentDescription = null,
-                            tint = if (isDualFormat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Dual-Format Recording",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = if (isDualFormat) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (isDualFormat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-                                ) {
-                                    Text(
-                                        text = if (isDualFormat) "9:16 + 16:9" else "Single",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                        color = if (isDualFormat) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = if (isDualFormat) "Simultaneously saves Vertical & Horizontal videos" else "Standard single format only",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (isDualFormat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                            )
-                        }
-                    }
-                    Switch(
-                        checked = isDualFormat,
-                        enabled = !isRecording && !isPaused && !isStarting && !isStopping,
-                        onCheckedChange = { next ->
-                            RecordingManager.setDualFormatEnabled(next)
-                            coroutineScope.launch {
-                                AppSettings.setDualFormatEnabled(context, next)
-                            }
-                        },
-                        modifier = Modifier
-                            .scale(0.85f)
-                            .testTag("dual_format_switch")
-                    )
-                }
-            }
-
-            // Emergency Trigger Info Banner
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .testTag("settings_button")
+                        .size(44.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)
                 ) {
                     Icon(
-                        Icons.Default.Bolt,
-                        contentDescription = "Emergency trigger",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Emergency Key: Hold both Vol keys (4s to start, 2s to stop)",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                }
-            }
-
-            // Central Recording Controller (In the middle)
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                // Pulsing glow rings when active
-                if (isRecording) {
-                    Box(
-                        modifier = Modifier
-                            .size(240.dp)
-                            .scale(pulseScale)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.15f))
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(200.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.25f))
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings",
+                        tint = Color.White
                     )
                 }
 
-                // Big Center Start/Stop Button
-                Surface(
-                    shape = CircleShape,
-                    color = when {
-                        isRecording || isPaused -> MaterialTheme.colorScheme.error
-                        isStarting || isStopping -> MaterialTheme.colorScheme.secondary
-                        else -> MaterialTheme.colorScheme.primary
+                // Dual Format Toggle
+                IconButton(
+                    onClick = {
+                        RecordingManager.setDualFormatEnabled(!dualFormatEnabled)
                     },
-                    shadowElevation = 12.dp,
                     modifier = Modifier
-                        .size(160.dp)
-                        .clip(CircleShape)
-                        .clickable(
-                            enabled = !isStarting && !isStopping,
-                            onClick = {
-                                if (recordingState == RecordingState.IDLE) {
-                                    val intent = Intent(context, RecordingService::class.java).apply {
-                                        action = RecordingService.ACTION_START
-                                    }
-                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                                        context.startForegroundService(intent)
-                                    } else {
-                                        context.startService(intent)
-                                    }
-                                } else {
-                                    val intent = Intent(context, RecordingService::class.java).apply {
-                                        action = RecordingService.ACTION_STOP
-                                    }
-                                    context.startService(intent)
-                                }
-                            }
+                        .testTag("switch_to_dual_camera_button")
+                        .size(44.dp)
+                        .background(
+                            if (dualFormatEnabled) Color(0xFF00E5FF).copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.55f),
+                            CircleShape
                         )
-                        .testTag("start_stop_button")
                 ) {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = when {
-                                isStarting || isStopping -> Icons.Default.HourglassEmpty
-                                isRecording || isPaused -> Icons.Default.Stop
-                                else -> Icons.Default.PlayArrow
-                            },
-                            contentDescription = if (isRecording) "Stop Recording" else "Start Recording",
-                            modifier = Modifier.size(56.dp),
-                            tint = when {
-                                isRecording || isPaused -> MaterialTheme.colorScheme.onError
-                                isStarting || isStopping -> MaterialTheme.colorScheme.onSecondary
-                                else -> MaterialTheme.colorScheme.onPrimary
-                            }
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = when {
-                                isStarting -> "Starting..."
-                                isStopping -> "Saving..."
-                                isRecording -> "STOP"
-                                isPaused -> "STOP"
-                                else -> "START"
-                            },
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 1.2.sp
-                            ),
-                            color = when {
-                                isRecording || isPaused -> MaterialTheme.colorScheme.onError
-                                isStarting || isStopping -> MaterialTheme.colorScheme.onSecondary
-                                else -> MaterialTheme.colorScheme.onPrimary
-                            }
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.ViewCarousel,
+                        contentDescription = "Toggle Dual Format",
+                        tint = if (dualFormatEnabled) Color(0xFF00E5FF) else Color.White
+                    )
+                }
+
+                // Recordings Library Button
+                IconButton(
+                    onClick = onNavigateToRecordings,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.VideoLibrary,
+                        contentDescription = "Recordings",
+                        tint = Color.White
+                    )
                 }
             }
 
-            // Quick Actions & Controls Bar
+            // Bottom Recording Controls
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 24.dp, start = 16.dp, end = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Pause / Resume option when recording
-                AnimatedVisibility(visible = isRecording || isPaused) {
-                    FilledTonalButton(
-                        onClick = {
-                            val intent = Intent(context, RecordingService::class.java).apply {
-                                action = if (isRecording) RecordingService.ACTION_PAUSE else RecordingService.ACTION_RESUME
-                            }
-                            context.startService(intent)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 16.dp)
-                            .testTag("pause_resume_button")
+                // Duration & Status Timer
+                if (isBusy) {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.Black.copy(alpha = 0.7f),
+                        contentColor = Color.White
                     ) {
-                        Icon(
-                            if (isRecording) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = null
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (isRecording) "Pause Recording" else "Resume Recording")
-                    }
-                }
-
-                // Far Only Mode Exposure Adjustment Card (when Far Focus Only is active)
-                AnimatedVisibility(visible = isFarFocusOnly) {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Default.Landscape,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        "Far Only Exposure",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
-                                    )
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer
-                                ) {
-                                    Text(
-                                        text = String.format("%+.1f EV", exposureEvValue),
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-
-                            // Steppers row
-                            Row(
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 6.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                FilledTonalButton(
-                                    onClick = { RecordingManager.stepExposureEv(-0.5f) },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(28.dp)
-                                ) {
-                                    Text("-0.5 EV", fontSize = 10.sp)
-                                }
-                                FilledTonalButton(
-                                    onClick = { RecordingManager.stepExposureEv(-0.1f) },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(28.dp)
-                                ) {
-                                    Text("-0.1 EV", fontSize = 10.sp)
-                                }
-                                OutlinedButton(
-                                    onClick = { RecordingManager.resetExposure() },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(28.dp)
-                                ) {
-                                    Text("Reset", fontSize = 10.sp)
-                                }
-                                FilledTonalButton(
-                                    onClick = { RecordingManager.stepExposureEv(0.1f) },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(28.dp)
-                                ) {
-                                    Text("+0.1 EV", fontSize = 10.sp)
-                                }
-                                FilledTonalButton(
-                                    onClick = { RecordingManager.stepExposureEv(0.5f) },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(28.dp)
-                                ) {
-                                    Text("+0.5 EV", fontSize = 10.sp)
-                                }
-                            }
-
-                            Slider(
-                                value = exposureCompensation,
-                                onValueChange = { RecordingManager.setExposureCompensation(it) },
-                                valueRange = -1f..1f,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("dashboard_far_exposure_slider")
+                                    .size(10.dp)
+                                    .background(if (isPaused) Color.Yellow else Color.Red, CircleShape)
                             )
+                            Text(
+                                text = durationText,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            if (isPaused) {
+                                Text(
+                                    text = "PAUSED",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Yellow
+                                )
+                            }
                         }
                     }
                 }
 
+                // Controls Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Far Focus Only Toggle
-                    OutlinedButton(
-                        onClick = { RecordingManager.toggleFarFocusOnly() },
-                        modifier = Modifier
-                            .weight(1.1f)
-                            .padding(end = 3.dp)
-                            .testTag("dashboard_far_only_button"),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = if (isFarFocusOnly) {
-                            ButtonDefaults.outlinedButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    // Framing Crop Position Toggle
+                    if (dualFormatEnabled) {
+                        IconButton(
+                            onClick = { RecordingManager.cycleCropPosition() },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Crop,
+                                contentDescription = "Crop Position",
+                                tint = Color.White
                             )
-                        } else {
-                            ButtonDefaults.outlinedButtonColors()
                         }
-                    ) {
-                        Icon(Icons.Default.Landscape, contentDescription = "Far Only", modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(if (isFarFocusOnly) "Far ON" else "Far", maxLines = 1, fontSize = 11.sp)
+                    } else {
+                        Spacer(modifier = Modifier.size(48.dp))
                     }
 
-                    // Night Mode Toggle (Optimized for Moto Edge 50 Fusion sensor)
-                    OutlinedButton(
-                        onClick = { RecordingManager.toggleNightMode() },
+                    // Primary Record / Stop Button
+                    Button(
+                        onClick = {
+                            if (isRecording || isPaused) {
+                                val stopIntent = Intent(context, RecordingService::class.java).apply {
+                                    action = RecordingService.ACTION_STOP
+                                }
+                                context.startService(stopIntent)
+                            } else {
+                                val startIntent = Intent(context, RecordingService::class.java).apply {
+                                    action = RecordingService.ACTION_START
+                                }
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    context.startForegroundService(startIntent)
+                                } else {
+                                    context.startService(startIntent)
+                                }
+                            }
+                        },
                         modifier = Modifier
-                            .weight(1.1f)
-                            .padding(horizontal = 3.dp)
-                            .testTag("night_mode_button"),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = if (isNightMode) {
-                            ButtonDefaults.outlinedButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        } else {
-                            ButtonDefaults.outlinedButtonColors()
-                        }
+                            .testTag("record_button")
+                            .size(76.dp),
+                        shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isBusy) Color.Red else Color.White
+                        )
                     ) {
                         Icon(
-                            if (isNightMode) Icons.Default.Bedtime else Icons.Outlined.Bedtime,
-                            contentDescription = "Night Mode",
-                            modifier = Modifier.size(16.dp)
+                            imageVector = if (isBusy) Icons.Default.Stop else Icons.Default.FiberManualRecord,
+                            contentDescription = if (isBusy) "Stop Recording" else "Start Recording",
+                            modifier = Modifier.size(36.dp),
+                            tint = if (isBusy) Color.White else Color.Red
                         )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(if (isNightMode) "Night ON" else "Night", maxLines = 1, fontSize = 11.sp)
                     }
 
-                    // Flash / Torch Toggle
-                    OutlinedButton(
-                        onClick = { RecordingManager.toggleTorch() },
-                        modifier = Modifier
-                            .weight(0.9f)
-                            .padding(horizontal = 3.dp)
-                            .testTag("flash_button"),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Icon(Icons.Default.FlashlightOn, contentDescription = "Flash", modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text("Flash", maxLines = 1, fontSize = 11.sp)
+                    // Pause / Resume Button
+                    if (isBusy) {
+                        FilledTonalButton(
+                            onClick = {
+                                val action = if (isPaused) RecordingService.ACTION_RESUME else RecordingService.ACTION_PAUSE
+                                val intent = Intent(context, RecordingService::class.java).apply {
+                                    this.action = action
+                                }
+                                context.startService(intent)
+                            },
+                            modifier = Modifier
+                                .testTag("pause_resume_button")
+                                .size(48.dp),
+                            shape = CircleShape,
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = Color.Black.copy(alpha = 0.55f)
+                            ),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                contentDescription = if (isPaused) "Resume" else "Pause",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.size(48.dp))
                     }
+                }
+            }
 
-                    // Switch Camera Lens
-                    OutlinedButton(
-                        onClick = { RecordingManager.toggleCamera() },
-                        enabled = recordingState == RecordingState.IDLE,
-                        modifier = Modifier
-                            .weight(0.9f)
-                            .padding(horizontal = 3.dp)
-                            .testTag("switch_camera_button"),
-                        shape = RoundedCornerShape(14.dp)
+            // Post-processing indicator
+            AnimatedVisibility(
+                visible = isProcessingDual,
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.Black.copy(alpha = 0.85f),
+                    contentColor = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Icon(Icons.Default.Cameraswitch, contentDescription = "Switch Camera", modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text("Flip", maxLines = 1, fontSize = 11.sp)
-                    }
-
-                    // Recordings Gallery
-                    Button(
-                        onClick = onNavigateToRecordings,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 3.dp)
-                            .testTag("recordings_button"),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Icon(Icons.Default.VideoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text("Videos", maxLines = 1, fontSize = 11.sp)
+                        CircularProgressIndicator(
+                            color = Color(0xFF00E5FF),
+                            strokeWidth = 3.dp
+                        )
+                        Text(
+                            text = "Saving High Quality Videos...",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Encoding in Master Bitrate",
+                            fontSize = 12.sp,
+                            color = Color.Gray
+                        )
                     }
                 }
             }
         }
     }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = durationMs / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format(Locale.US, "%02d:%02d", minutes, seconds)
 }

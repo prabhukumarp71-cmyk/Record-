@@ -1,7 +1,9 @@
 package com.example.ui
 
 import android.net.Uri
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -12,20 +14,39 @@ import com.example.ui.screens.RecordingsScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.VideoPlayerScreen
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppNavigation() {
-    val navController = rememberNavController()
-
-    NavHost(navController = navController, startDestination = "home") {
+fun AppNavigation(
+    navController: NavHostController = rememberNavController()
+) {
+    NavHost(
+        navController = navController,
+        startDestination = "home"
+    ) {
         composable("home") {
             HomeScreen(
-                onNavigateToRecordings = { navController.navigate("recordings") },
-                onNavigateToSettings = { navController.navigate("settings") }
+                onNavigateToSettings = {
+                    navController.navigate("settings")
+                },
+                onNavigateToRecordings = {
+                    navController.navigate("recordings")
+                }
             )
         }
+
+        composable("settings") {
+            SettingsScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
         composable("recordings") {
             RecordingsScreen(
-                onNavigateBack = { navController.popBackStack() },
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
                 onNavigateToPlayer = { uri, companion ->
                     val encodedUri = Uri.encode(uri)
                     val encodedCompanion = if (companion != null) Uri.encode(companion) else "none"
@@ -33,26 +54,29 @@ fun AppNavigation() {
                 }
             )
         }
-        composable("settings") {
-            SettingsScreen(
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+
         composable(
-            "player/{uri}/{companion}",
+            route = "player/{uri}/{companion}",
             arguments = listOf(
                 navArgument("uri") { type = NavType.StringType },
                 navArgument("companion") { type = NavType.StringType }
             )
         ) { backStackEntry ->
-            val uri = Uri.decode(backStackEntry.arguments?.getString("uri"))
+            val uriArg = backStackEntry.arguments?.getString("uri") ?: ""
             val companionArg = backStackEntry.arguments?.getString("companion")
-            val companion = if (companionArg != null && companionArg != "none") Uri.decode(companionArg) else null
+            val decodedUri = Uri.decode(uriArg)
+            val decodedCompanion = if (companionArg != null && companionArg != "none") {
+                Uri.decode(companionArg)
+            } else {
+                null
+            }
 
             VideoPlayerScreen(
-                videoUriStr = uri,
-                companionUriStr = companion,
-                onNavigateBack = { navController.popBackStack() }
+                videoUriStr = decodedUri,
+                companionUriStr = decodedCompanion,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
             )
         }
     }
