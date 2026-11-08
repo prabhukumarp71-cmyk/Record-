@@ -682,11 +682,15 @@ object RecordingManager {
 
     @SuppressLint("MissingPermission")
     fun startRecording(context: Context, audioEnabled: Boolean) {
-        if (_recordingState.value == RecordingState.RECORDING || _recordingState.value == RecordingState.STARTING) return
+        if (activeRecording != null || _recordingState.value == RecordingState.RECORDING) {
+            Log.w(TAG, "Recording already active, ignoring duplicate start call")
+            return
+        }
 
         val capture = videoCapture ?: run {
             Log.e(TAG, "VideoCapture is null when starting recording")
-            Toast.makeText(context, "Camera is still initializing, please try again in a second", Toast.LENGTH_SHORT).show()
+            _recordingState.value = RecordingState.ERROR
+            Toast.makeText(context, "Camera is still initializing, please try again in a moment", Toast.LENGTH_SHORT).show()
             return
         }
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
@@ -702,17 +706,19 @@ object RecordingManager {
 
         _recordingState.value = RecordingState.STARTING
 
-        var pendingRecording = capture.output.prepareRecording(context, fileOutputOptions)
-        val hasAudioPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        if (audioEnabled && hasAudioPermission) {
-            pendingRecording = pendingRecording.withAudioEnabled()
-        }
+        try {
+            var pendingRecording = capture.output.prepareRecording(context, fileOutputOptions)
+            val hasAudioPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            if (audioEnabled && hasAudioPermission) {
+                pendingRecording = pendingRecording.withAudioEnabled()
+            }
 
-        activeRecording = pendingRecording.start(ContextCompat.getMainExecutor(context)) { recordEvent ->
-            when (recordEvent) {
-                is VideoRecordEvent.Start -> {
-                    _recordingState.value = RecordingState.RECORDING
-                }
+            activeRecording = pendingRecording.start(ContextCompat.getMainExecutor(context)) { recordEvent ->
+                when (recordEvent) {
+                    is VideoRecordEvent.Start -> {
+                        Log.i(TAG, "VideoRecordEvent.Start received: RECORDING IS ACTIVE")
+                        _recordingState.value = RecordingState.RECORDING
+                    }
                 is VideoRecordEvent.Pause -> {
                     _recordingState.value = RecordingState.PAUSED
                 }
@@ -796,6 +802,18 @@ object RecordingManager {
                     }
                 }
             }
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Failed to start recording: ${e.message}", e)
+        _recordingState.value = RecordingState.ERROR
+        activeRecording = null
+        Toast.makeText(context, "Recording failed: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+    fun setStarting() {
+        if (_recordingState.value == RecordingState.IDLE) {
+            _recordingState.value = RecordingState.STARTING
         }
     }
 

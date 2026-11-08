@@ -177,38 +177,39 @@ fun HomeScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Duration & Status Timer
-                if (isBusy) {
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color.Black.copy(alpha = 0.7f),
-                        contentColor = Color.White
+                // Video Mode & Live Status Badge
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.Black.copy(alpha = 0.75f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isBusy) Color.Red else Color.White.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(10.dp)
-                                    .background(if (isPaused) Color.Yellow else Color.Red, CircleShape)
-                            )
-                            Text(
-                                text = durationText,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            if (isPaused) {
-                                Text(
-                                    text = "PAUSED",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.Yellow
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(
+                                    if (isPaused) Color.Yellow else if (isBusy) Color.Red else Color(0xFFFF5252),
+                                    CircleShape
                                 )
-                            }
-                        }
+                        )
+                        Text(
+                            text = if (isBusy) {
+                                if (isPaused) "PAUSED • $durationText" else "🔴 RECORDING ($durationText)"
+                            } else {
+                                "📹 VIDEO MODE • READY"
+                            },
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isBusy) Color.White else Color(0xFFFFCDD2),
+                            letterSpacing = 0.5.sp
+                        )
                     }
                 }
 
@@ -233,7 +234,7 @@ fun HomeScreen(
                                 .size(48.dp),
                             shape = CircleShape,
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = Color.Black.copy(alpha = 0.55f)
+                                containerColor = Color.Black.copy(alpha = 0.65f)
                             ),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                         ) {
@@ -247,52 +248,87 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(28.dp))
                     }
 
-                    // Primary Record / Stop Button
-                    Button(
-                        onClick = {
-                            if (recordingState == RecordingState.STARTING || recordingState == RecordingState.STOPPING) {
-                                return@Button
-                            }
-                            if (isRecording || isPaused) {
-                                val stopIntent = Intent(context, RecordingService::class.java).apply {
-                                    action = RecordingService.ACTION_STOP
-                                }
-                                context.startService(stopIntent)
-                            } else {
-                                val hasCamera = androidx.core.content.ContextCompat.checkSelfPermission(
-                                    context,
-                                    android.Manifest.permission.CAMERA
-                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                                if (!hasCamera) {
-                                    android.widget.Toast.makeText(context, "Camera permission is required to record", android.widget.Toast.LENGTH_SHORT).show()
-                                    return@Button
-                                }
-                                val startIntent = Intent(context, RecordingService::class.java).apply {
-                                    action = RecordingService.ACTION_START
-                                }
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    context.startForegroundService(startIntent)
-                                } else {
-                                    context.startService(startIntent)
-                                }
-                            }
-                        },
+                    // Primary Video Record / Stop Button
+                    Box(
                         modifier = Modifier
                             .testTag("record_button")
-                            .size(76.dp),
-                        shape = CircleShape,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isBusy) Color.Red else Color.White
-                        )
+                            .size(80.dp)
+                            .background(Color.Transparent, CircleShape)
+                            .clickable {
+                                if (recordingState == RecordingState.STARTING || recordingState == RecordingState.STOPPING) {
+                                    return@clickable
+                                }
+                                if (isRecording || isPaused) {
+                                    val stopIntent = Intent(context, RecordingService::class.java).apply {
+                                        action = RecordingService.ACTION_STOP
+                                    }
+                                    context.startService(stopIntent)
+                                } else {
+                                    val hasCamera = androidx.core.content.ContextCompat.checkSelfPermission(
+                                        context,
+                                        android.Manifest.permission.CAMERA
+                                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                    if (!hasCamera) {
+                                        android.widget.Toast.makeText(context, "Camera permission is required to record", android.widget.Toast.LENGTH_SHORT).show()
+                                        return@clickable
+                                    }
+                                    RecordingManager.setStarting()
+                                    Toast.makeText(context, "🔴 Starting Background Video Recording...", Toast.LENGTH_SHORT).show()
+                                    val startIntent = Intent(context, RecordingService::class.java).apply {
+                                        action = RecordingService.ACTION_START
+                                    }
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        context.startForegroundService(startIntent)
+                                    } else {
+                                        context.startService(startIntent)
+                                    }
+                                }
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = if (isBusy) Icons.Default.Stop else Icons.Default.FiberManualRecord,
-                            contentDescription = if (isBusy) "Stop Recording" else "Start Recording",
-                            modifier = Modifier.size(36.dp),
-                            tint = if (isBusy) Color.White else Color.Red
+                        // Outer ring
+                        Box(
+                            modifier = Modifier
+                                .size(80.dp)
+                                .background(
+                                    Color.Transparent,
+                                    CircleShape
+                                )
+                                .then(
+                                    Modifier.background(
+                                        Color.White.copy(alpha = 0.2f),
+                                        CircleShape
+                                    )
+                                )
                         )
+                        // Inner Red Video Button / Stop Square
+                        if (isBusy) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .background(Color.Red, RoundedCornerShape(6.dp))
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(62.dp)
+                                    .background(Color(0xFFE53935), CircleShape)
+                            )
+                        }
                     }
                 }
+
+                // Helpful background recording indicator text
+                Text(
+                    text = if (isBusy) {
+                        "🔒 Safe to lock screen or close app — video keeps recording"
+                    } else {
+                        "Tap RED circle to record • Continues when app is closed"
+                    },
+                    fontSize = 11.sp,
+                    color = Color.White.copy(alpha = 0.75f),
+                    fontWeight = FontWeight.Medium
+                )
             }
         }
     }

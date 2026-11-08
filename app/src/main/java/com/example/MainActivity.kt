@@ -25,6 +25,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val state = com.example.camera.RecordingManager.recordingState.value
+                if (state == com.example.model.RecordingState.RECORDING || state == com.example.model.RecordingState.STARTING || state == com.example.model.RecordingState.PAUSED) {
+                    moveTaskToBack(true)
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                }
+            }
+        })
+
         setContent {
             MyApplicationTheme {
                 val permissionsToRequest = buildList {
