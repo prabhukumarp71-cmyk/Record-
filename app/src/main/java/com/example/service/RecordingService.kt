@@ -52,7 +52,12 @@ class RecordingService : LifecycleService() {
             ACTION_PAUSE -> pauseRecording()
             ACTION_RESUME -> resumeRecording()
         }
-        return START_NOT_STICKY
+        return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.i(TAG, "onTaskRemoved: App removed from recents, background recording remains running")
     }
 
     private fun acquireWakeLock() {

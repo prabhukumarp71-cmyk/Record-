@@ -110,7 +110,13 @@ fun DualFrameViewfinder(
             )
         } else {
             // Camera is already bound to RecordingService in background; attach surface provider for live preview
-            RecordingManager.setSurfaceProvider(pv.surfaceProvider)
+            RecordingManager.setUiSurfaceProvider(pv.surfaceProvider)
+        }
+    }
+
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            RecordingManager.setUiSurfaceProvider(null)
         }
     }
 

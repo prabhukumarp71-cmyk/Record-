@@ -160,13 +160,15 @@ object RecordingManager {
         }
     }
 
-    fun setDualFormatEnabled(enabled: Boolean) {
-        _dualFormatEnabled.value = enabled
+    private var safeSurfaceProvider: BackgroundSafeSurfaceProvider? = null
+
+    fun setUiSurfaceProvider(provider: Preview.SurfaceProvider?) {
+        currentSurfaceProvider = provider
+        safeSurfaceProvider?.setUiProvider(provider)
     }
 
     fun setSurfaceProvider(provider: Preview.SurfaceProvider?) {
-        currentSurfaceProvider = provider
-        previewUseCase?.setSurfaceProvider(provider)
+        setUiSurfaceProvider(provider)
     }
 
     @SuppressLint("UnsafeOptInUsageError")
@@ -393,15 +395,18 @@ object RecordingManager {
                 val useCases = mutableListOf<UseCase>()
                 videoCapture?.let { useCases.add(it) }
 
-                if (currentSurfaceProvider != null) {
-                    previewUseCase = Preview.Builder()
-                        .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
-                        .build()
-                    previewUseCase?.setSurfaceProvider(currentSurfaceProvider)
-                    previewUseCase?.let { useCases.add(it) }
-                } else {
-                    previewUseCase = null
+                val safeProvider = safeSurfaceProvider ?: BackgroundSafeSurfaceProvider(context.applicationContext).also {
+                    safeSurfaceProvider = it
                 }
+                if (surfaceProvider != null) {
+                    safeProvider.setUiProvider(surfaceProvider)
+                }
+
+                previewUseCase = Preview.Builder()
+                    .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
+                    .build()
+                previewUseCase?.setSurfaceProvider(safeProvider)
+                previewUseCase?.let { useCases.add(it) }
 
                 var imageAnalysis: ImageAnalysis? = null
                 if (quality != Quality.UHD && humanTracker.humanAfEnabled.value) {
