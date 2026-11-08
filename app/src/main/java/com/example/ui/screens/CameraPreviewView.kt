@@ -40,7 +40,7 @@ fun CameraPreviewView(
         modifier = modifier.fillMaxSize(),
         factory = { ctx ->
             PreviewView(ctx).apply {
-                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                implementationMode = PreviewView.ImplementationMode.PERFORMANCE
                 scaleType = PreviewView.ScaleType.FILL_CENTER
                 previewViewInstance = this
                 val targetQuality = RecordingManager.parseQuality(qualityName)

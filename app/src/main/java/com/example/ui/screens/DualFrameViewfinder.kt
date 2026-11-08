@@ -98,7 +98,7 @@ fun DualFrameViewfinder(
         androidx.camera.core.CameraSelector.LENS_FACING_BACK
     }
 
-    LaunchedEffect(qualityName, cameraLensName, lifecycleOwner, currentPreviewViewInstance) {
+    LaunchedEffect(qualityName, cameraLensName, lifecycleOwner, currentPreviewViewInstance, recordingState) {
         val pv = currentPreviewViewInstance ?: return@LaunchedEffect
         if (recordingState == RecordingState.IDLE) {
             RecordingManager.bindCamera(
@@ -108,6 +108,9 @@ fun DualFrameViewfinder(
                 quality = targetQuality,
                 surfaceProvider = pv.surfaceProvider
             )
+        } else {
+            // Camera is already bound to RecordingService in background; attach surface provider for live preview
+            RecordingManager.setSurfaceProvider(pv.surfaceProvider)
         }
     }
 
@@ -129,7 +132,7 @@ fun DualFrameViewfinder(
                 },
             factory = { ctx ->
                 PreviewView(ctx).apply {
-                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    implementationMode = PreviewView.ImplementationMode.PERFORMANCE
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                     currentPreviewViewInstance = this
                     RecordingManager.setSurfaceProvider(this.surfaceProvider)

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
+import android.media.CamcorderProfile
 import android.os.Build
 import android.util.Log
 import android.util.Range
@@ -124,7 +125,8 @@ object RecordingManager {
     val isCameraReady: Boolean
         get() = videoCapture != null
 
-    private var currentSurfaceProvider: Preview.SurfaceProvider? = null
+    var currentSurfaceProvider: Preview.SurfaceProvider? = null
+        private set
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
     private var cameraProvider: ProcessCameraProvider? = null
@@ -202,41 +204,73 @@ object RecordingManager {
                     null
                 }
 
-                val supportedQualities: List<Quality> = cameraInfo?.let { info ->
+                val camIdInt = cameraInfo?.let { info ->
                     try {
-                        Recorder.getVideoCapabilities(info).getSupportedQualities(androidx.camera.core.DynamicRange.SDR)
+                        Camera2CameraInfo.from(info).cameraId.toIntOrNull()
                     } catch (e: Exception) {
-                        Log.w(TAG, "Failed to get supported qualities: ${e.message}")
-                        emptyList<Quality>()
+                        null
                     }
-                } ?: emptyList<Quality>()
+                } ?: if (lensFacing == CameraSelector.LENS_FACING_FRONT) 1 else 0
 
-                Log.d(TAG, "Supported video qualities: $supportedQualities, requested: $quality")
+                val supportedQualities = mutableListOf<Quality>()
+                try {
+                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_2160P)) {
+                        supportedQualities.add(Quality.UHD)
+                    }
+                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_1080P)) {
+                        supportedQualities.add(Quality.FHD)
+                    }
+                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_720P)) {
+                        supportedQualities.add(Quality.HD)
+                    }
+                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_480P)) {
+                        supportedQualities.add(Quality.SD)
+                    }
+                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_LOW)) {
+                        supportedQualities.add(Quality.LOWEST)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error checking CamcorderProfile: ${e.message}")
+                }
 
-                val preferredQualities = mutableListOf<Quality>()
-                preferredQualities.add(quality)
-                if (supportedQualities.isNotEmpty()) {
-                    supportedQualities.forEach { q ->
-                        if (!preferredQualities.contains(q)) {
-                            preferredQualities.add(q)
+                if (supportedQualities.isEmpty()) {
+                    try {
+                        if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_HIGH)) {
+                            supportedQualities.add(Quality.HIGHEST)
                         }
+                    } catch (e: Exception) {
+                        // ignore
                     }
                 }
-                listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD, Quality.LOWEST).forEach { q ->
+
+                Log.d(TAG, "Supported video qualities via CamcorderProfile: $supportedQualities, requested: $quality")
+
+                val preferredQualities = mutableListOf<Quality>()
+                if (quality in supportedQualities) {
+                    preferredQualities.add(quality)
+                }
+                supportedQualities.forEach { q ->
                     if (!preferredQualities.contains(q)) {
                         preferredQualities.add(q)
                     }
                 }
 
-                val qualitySelector = QualitySelector.fromOrderedList(
-                    preferredQualities,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.LOWEST)
-                )
+                val qualitySelector = if (preferredQualities.isNotEmpty()) {
+                    QualitySelector.fromOrderedList(
+                        preferredQualities,
+                        FallbackStrategy.lowerQualityOrHigherThan(preferredQualities.last())
+                    )
+                } else {
+                    QualitySelector.from(
+                        Quality.LOWEST,
+                        FallbackStrategy.higherQualityOrLowerThan(Quality.LOWEST)
+                    )
+                }
 
                 val resolvedQuality = when {
-                    supportedQualities.contains(quality) -> quality
-                    supportedQualities.isNotEmpty() -> supportedQualities.first()
-                    else -> quality
+                    preferredQualities.contains(quality) -> quality
+                    preferredQualities.isNotEmpty() -> preferredQualities.first()
+                    else -> Quality.LOWEST
                 }
 
                 _activeQualityDescription.value = when (resolvedQuality) {
@@ -244,6 +278,8 @@ object RecordingManager {
                     Quality.FHD -> "1080p FHD • 1920×1080 (High Profile)"
                     Quality.HD -> "720p HD • 1280×720 (High Profile)"
                     Quality.SD -> "480p SD • 720×480"
+                    Quality.LOWEST -> "Standard SD"
+                    Quality.HIGHEST -> "High Quality"
                     else -> "HD Standard"
                 }
 
