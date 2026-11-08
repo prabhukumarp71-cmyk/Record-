@@ -205,7 +205,7 @@ object DualFormatVideoHelper {
 
                         val transformer = Transformer.Builder(context)
                             .setEncoderFactory(encoderFactory)
-                            .setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H265)
+                            .setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H264)
                             .addListener(object : Transformer.Listener {
                                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                                     Log.d(TAG, "Media3 export completed: bytes=${exportResult.fileSizeBytes}, bitrate=$targetBitrate")
@@ -255,13 +255,6 @@ object DualFormatVideoHelper {
         val isVertical = meta.isVertical
         Log.d(TAG, "Raw capture video: effective=${meta.effectiveWidth}x${meta.effectiveHeight}, rot=${meta.rotation}, isVertical=$isVertical")
 
-        val (targetPrimaryW, targetPrimaryH) = when (targetQuality) {
-            Quality.UHD -> if (isVertical) Pair(2160, 3840) else Pair(3840, 2160)
-            Quality.HD -> if (isVertical) Pair(720, 1280) else Pair(1280, 720)
-            Quality.SD -> if (isVertical) Pair(480, 720) else Pair(720, 480)
-            else -> if (isVertical) Pair(1080, 1920) else Pair(1920, 1080) // Quality.FHD
-        }
-
         val primaryDisplayName = if (isDual) {
             val suffix = if (isVertical) "_Vertical" else "_Horizontal"
             "${baseName}${suffix}.mp4"
@@ -269,30 +262,8 @@ object DualFormatVideoHelper {
             "${baseName}.mp4"
         }
 
-        val needsConform = (meta.effectiveWidth != targetPrimaryW || meta.effectiveHeight != targetPrimaryH)
-        var primaryFileToSave = rawFile
-        val tempPrimaryConformed = File(context.cacheDir, "fhd_primary_${System.currentTimeMillis()}.mp4")
-
-        if (needsConform) {
-            Log.d(TAG, "Upscaling/conforming video from ${meta.effectiveWidth}x${meta.effectiveHeight} to target $targetPrimaryW x $targetPrimaryH...")
-            val effects = listOf<Effect>(
-                Presentation.createForWidthAndHeight(
-                    targetPrimaryW,
-                    targetPrimaryH,
-                    Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
-                )
-            )
-            val conformed = transformVideo(context, rawFile, tempPrimaryConformed, effects, targetPrimaryW, targetPrimaryH)
-            if (conformed && tempPrimaryConformed.exists() && tempPrimaryConformed.length() > 0L) {
-                Log.d(TAG, "Successfully conformed video to $targetPrimaryW x $targetPrimaryH!")
-                primaryFileToSave = tempPrimaryConformed
-            } else {
-                Log.w(TAG, "Primary conform failed; saving raw recording file")
-                primaryFileToSave = rawFile
-            }
-        }
-
-        val primaryUri = saveFileToMediaStore(context, primaryFileToSave, primaryDisplayName)
+        // Save original pristine high-bitrate master file directly
+        val primaryUri = saveFileToMediaStore(context, rawFile, primaryDisplayName)
 
         var companionUri: Uri? = null
         if (isDual) {
@@ -333,7 +304,7 @@ object DualFormatVideoHelper {
                 )
             }
 
-            val companionSuccess = transformVideo(context, primaryFileToSave, tempCompanion, companionEffects, companionTargetW, companionTargetH)
+            val companionSuccess = transformVideo(context, rawFile, tempCompanion, companionEffects, companionTargetW, companionTargetH)
             if (companionSuccess && tempCompanion.exists() && tempCompanion.length() > 0L) {
                 companionUri = saveFileToMediaStore(context, tempCompanion, companionDisplayName)
                 Log.d(TAG, "Successfully created and saved companion video: $companionUri ($companionDisplayName)")
@@ -343,8 +314,6 @@ object DualFormatVideoHelper {
 
             if (tempCompanion.exists()) tempCompanion.delete()
         }
-
-        if (tempPrimaryConformed.exists()) tempPrimaryConformed.delete()
 
         ProcessedRecordingResult(primaryUri, companionUri)
     }

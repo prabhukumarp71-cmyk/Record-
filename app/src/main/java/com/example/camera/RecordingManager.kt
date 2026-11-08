@@ -350,14 +350,17 @@ object RecordingManager {
                     previewUseCase = null
                 }
 
-                val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
-                val imageAnalysis = ImageAnalysis.Builder()
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
-                    .setTargetResolution(Size(640, 480))
-                    .build()
-                imageAnalysis.setAnalyzer(humanTracker.executor, humanTracker.createAnalyzer(isFront))
-                useCases.add(imageAnalysis)
+                var imageAnalysis: ImageAnalysis? = null
+                if (quality != Quality.UHD && humanTracker.humanAfEnabled.value) {
+                    val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
+                    imageAnalysis = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                        .setTargetResolution(Size(640, 480))
+                        .build()
+                    imageAnalysis.setAnalyzer(humanTracker.executor, humanTracker.createAnalyzer(isFront))
+                    useCases.add(imageAnalysis)
+                }
 
                 try {
                     camera = cameraProvider?.bindToLifecycle(
@@ -368,7 +371,7 @@ object RecordingManager {
                     humanTracker.attachCamera(camera, imageAnalysis)
                 } catch (e: Exception) {
                     Log.w(TAG, "Binding all use cases failed, fallback without ImageAnalysis: ${e.message}")
-                    useCases.remove(imageAnalysis)
+                    imageAnalysis?.let { useCases.remove(it) }
                     camera = cameraProvider?.bindToLifecycle(
                         lifecycleOwner,
                         cameraSelector,

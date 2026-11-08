@@ -2,9 +2,12 @@ package com.example.ui.screens
 
 import android.content.Intent
 import android.os.Build
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -66,6 +69,9 @@ fun HomeScreen(
     val dualFormatEnabled by RecordingManager.dualFormatEnabled.collectAsState()
     val cropPosition by RecordingManager.cropPosition.collectAsState()
 
+    val currentQuality by com.example.settings.AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+
     val isRecording = recordingState == RecordingState.RECORDING
     val isPaused = recordingState == RecordingState.PAUSED
     val isBusy = isRecording || isPaused || recordingState == RecordingState.STARTING || recordingState == RecordingState.STOPPING
@@ -106,6 +112,47 @@ fun HomeScreen(
                         contentDescription = "Settings",
                         tint = Color.White
                     )
+                }
+
+                // Quick Resolution Switcher Chip (1-tap toggle between 4K UHD & 1080p FHD)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (currentQuality == "ULTRA") Color(0xFFFF9100).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.65f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (currentQuality == "ULTRA") Color(0xFFFF9100) else Color(0xFF00E5FF)
+                    ),
+                    modifier = Modifier
+                        .testTag("quick_resolution_toggle")
+                        .clickable(enabled = !isBusy) {
+                            coroutineScope.launch {
+                                val next = if (currentQuality == "ULTRA") "HIGH" else "ULTRA"
+                                com.example.settings.AppSettings.setVideoQuality(context, next)
+                                val label = if (next == "ULTRA") "4K UHD (3840×2160)" else "1080p FHD (1920×1080)"
+                                Toast.makeText(context, "🎬 Quality: $label", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    if (currentQuality == "ULTRA") Color.White else Color(0xFF00E5FF),
+                                    CircleShape
+                                )
+                        )
+                        Text(
+                            text = if (currentQuality == "ULTRA") "4K UHD" else "1080p FHD",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = Color.White
+                        )
+                    }
                 }
 
                 // Dual Format Toggle

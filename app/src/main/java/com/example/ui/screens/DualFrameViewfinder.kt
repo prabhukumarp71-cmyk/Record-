@@ -78,6 +78,9 @@ fun DualFrameViewfinder(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    val qualityName by com.example.settings.AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
+    val cameraLensName by com.example.settings.AppSettings.getCameraLens(context).collectAsState(initial = "BACK")
+
     val recordingState by RecordingManager.recordingState.collectAsState()
     val isTorchOn by RecordingManager.isTorchOn.collectAsState()
     val zoomRatio by RecordingManager.zoomRatio.collectAsState()
@@ -97,7 +100,28 @@ fun DualFrameViewfinder(
     val afMode by RecordingManager.humanTracker.afMode.collectAsState()
 
     var previewTextureView by remember { mutableStateOf<TextureView?>(null) }
+    var currentPreviewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
     var showPip by remember { mutableStateOf(true) }
+
+    val targetQuality = RecordingManager.parseQuality(qualityName)
+    val lensFacing = if (cameraLensName == "FRONT") {
+        androidx.camera.core.CameraSelector.LENS_FACING_FRONT
+    } else {
+        androidx.camera.core.CameraSelector.LENS_FACING_BACK
+    }
+
+    androidx.compose.runtime.LaunchedEffect(qualityName, cameraLensName, lifecycleOwner, currentPreviewViewInstance) {
+        val pv = currentPreviewViewInstance ?: return@LaunchedEffect
+        if (recordingState == com.example.model.RecordingState.IDLE) {
+            RecordingManager.bindCamera(
+                context = context,
+                lifecycleOwner = lifecycleOwner,
+                lensFacing = lensFacing,
+                quality = targetQuality,
+                surfaceProvider = pv.surfaceProvider
+            )
+        }
+    }
 
     BoxWithConstraints(
         modifier = modifier
@@ -122,7 +146,15 @@ fun DualFrameViewfinder(
                 PreviewView(ctx).apply {
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                     scaleType = PreviewView.ScaleType.FILL_CENTER
+                    currentPreviewViewInstance = this
                     RecordingManager.setSurfaceProvider(this.surfaceProvider)
+                    RecordingManager.bindCamera(
+                        context = ctx,
+                        lifecycleOwner = lifecycleOwner,
+                        lensFacing = lensFacing,
+                        quality = targetQuality,
+                        surfaceProvider = this.surfaceProvider
+                    )
                     // Retrieve child TextureView for mirror companion
                     post {
                         for (i in 0 until childCount) {
@@ -136,6 +168,9 @@ fun DualFrameViewfinder(
                 }
             },
             update = { view ->
+                if (currentPreviewViewInstance != view) {
+                    currentPreviewViewInstance = view
+                }
                 RecordingManager.setSurfaceProvider(view.surfaceProvider)
                 if (previewTextureView == null) {
                     for (i in 0 until view.childCount) {
