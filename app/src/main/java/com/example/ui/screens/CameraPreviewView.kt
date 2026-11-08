@@ -23,14 +23,16 @@ fun CameraPreviewView(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val qualityName by AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
-    var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    var previewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
 
-    LaunchedEffect(qualityName, lifecycleOwner) {
+    LaunchedEffect(qualityName, lifecycleOwner, previewViewInstance) {
+        val pv = previewViewInstance ?: return@LaunchedEffect
         val targetQuality = RecordingManager.parseQuality(qualityName)
         RecordingManager.bindCamera(
             context = context,
             lifecycleOwner = lifecycleOwner,
-            quality = targetQuality
+            quality = targetQuality,
+            surfaceProvider = pv.surfaceProvider
         )
     }
 
@@ -40,12 +42,20 @@ fun CameraPreviewView(
             PreviewView(ctx).apply {
                 implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 scaleType = PreviewView.ScaleType.FILL_CENTER
-                previewView = this
-                RecordingManager.setSurfaceProvider(this.surfaceProvider)
+                previewViewInstance = this
+                val targetQuality = RecordingManager.parseQuality(qualityName)
+                RecordingManager.bindCamera(
+                    context = ctx,
+                    lifecycleOwner = lifecycleOwner,
+                    quality = targetQuality,
+                    surfaceProvider = this.surfaceProvider
+                )
             }
         },
         update = { view ->
-            RecordingManager.setSurfaceProvider(view.surfaceProvider)
+            if (previewViewInstance != view) {
+                previewViewInstance = view
+            }
         }
     )
 }

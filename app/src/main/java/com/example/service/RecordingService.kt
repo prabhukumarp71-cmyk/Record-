@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.camera.video.VideoRecordEvent
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
@@ -84,27 +85,54 @@ class RecordingService : LifecycleService() {
 
     private fun startRecording() {
         lifecycleScope.launch {
-            val audioEnabled = AppSettings.isAudioEnabled(this@RecordingService).first()
-            if (audioEnabled) {
-                requestCameraAudioFocus()
-            }
-            val notification = createNotification("🔴 High Quality Recording in progress...")
-            startForeground(NOTIFICATION_ID, notification)
+            try {
+                val audioEnabled = AppSettings.isAudioEnabled(this@RecordingService).first()
+                if (audioEnabled) {
+                    requestCameraAudioFocus()
+                }
+                val notification = createNotification("🔴 High Quality Recording in progress...")
 
-            if (RecordingManager.isCameraReady) {
-                RecordingManager.startRecording(this@RecordingService, audioEnabled)
-            } else {
-                val qualityStr = AppSettings.getVideoQuality(this@RecordingService).first()
-                val lensFacingStr = AppSettings.getCameraLens(this@RecordingService).first()
-                val quality = RecordingManager.parseQuality(qualityStr)
-                val lensFacing = if (lensFacingStr == "FRONT") {
-                    androidx.camera.core.CameraSelector.LENS_FACING_FRONT
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    var serviceType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                    val hasMic = androidx.core.content.ContextCompat.checkSelfPermission(
+                        this@RecordingService,
+                        android.Manifest.permission.RECORD_AUDIO
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    if (audioEnabled && hasMic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        serviceType = serviceType or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    }
+                    try {
+                        androidx.core.app.ServiceCompat.startForeground(
+                            this@RecordingService,
+                            NOTIFICATION_ID,
+                            notification,
+                            serviceType
+                        )
+                    } catch (e: Exception) {
+                        Log.e("RecordingService", "ServiceCompat.startForeground failed", e)
+                        startForeground(NOTIFICATION_ID, notification)
+                    }
                 } else {
-                    androidx.camera.core.CameraSelector.LENS_FACING_BACK
+                    startForeground(NOTIFICATION_ID, notification)
                 }
-                RecordingManager.bindCamera(this@RecordingService, this@RecordingService, lensFacing, quality) {
+
+                if (RecordingManager.isCameraReady) {
                     RecordingManager.startRecording(this@RecordingService, audioEnabled)
+                } else {
+                    val qualityStr = AppSettings.getVideoQuality(this@RecordingService).first()
+                    val lensFacingStr = AppSettings.getCameraLens(this@RecordingService).first()
+                    val quality = RecordingManager.parseQuality(qualityStr)
+                    val lensFacing = if (lensFacingStr == "FRONT") {
+                        androidx.camera.core.CameraSelector.LENS_FACING_FRONT
+                    } else {
+                        androidx.camera.core.CameraSelector.LENS_FACING_BACK
+                    }
+                    RecordingManager.bindCamera(this@RecordingService, this@RecordingService, lensFacing, quality) {
+                        RecordingManager.startRecording(this@RecordingService, audioEnabled)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("RecordingService", "Failed starting recording service", e)
             }
         }
     }

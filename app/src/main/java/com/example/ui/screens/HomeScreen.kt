@@ -214,12 +214,23 @@ fun HomeScreen(
                     // Primary Record / Stop Button
                     Button(
                         onClick = {
+                            if (recordingState == RecordingState.STARTING || recordingState == RecordingState.STOPPING) {
+                                return@Button
+                            }
                             if (isRecording || isPaused) {
                                 val stopIntent = Intent(context, RecordingService::class.java).apply {
                                     action = RecordingService.ACTION_STOP
                                 }
                                 context.startService(stopIntent)
                             } else {
+                                val hasCamera = androidx.core.content.ContextCompat.checkSelfPermission(
+                                    context,
+                                    android.Manifest.permission.CAMERA
+                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                if (!hasCamera) {
+                                    android.widget.Toast.makeText(context, "Camera permission is required to record", android.widget.Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
                                 val startIntent = Intent(context, RecordingService::class.java).apply {
                                     action = RecordingService.ACTION_START
                                 }

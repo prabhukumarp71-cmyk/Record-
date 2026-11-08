@@ -171,6 +171,7 @@ object RecordingManager {
         lifecycleOwner: LifecycleOwner,
         lensFacing: Int = currentLensFacing,
         quality: Quality = currentQuality,
+        surfaceProvider: Preview.SurfaceProvider? = currentSurfaceProvider,
         onBound: (() -> Unit)? = null
     ) {
         currentContext = context.applicationContext
@@ -178,6 +179,9 @@ object RecordingManager {
         currentLensFacing = lensFacing
         _lensFacing.value = lensFacing
         currentQuality = quality
+        if (surfaceProvider != null) {
+            currentSurfaceProvider = surfaceProvider
+        }
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
@@ -219,33 +223,31 @@ object RecordingManager {
                 }
 
                 _activeQualityDescription.value = when (quality) {
-                    Quality.UHD -> "4K UHD • 3840×2160 (50 Mbps Moto Master)"
-                    Quality.FHD -> "1080p FHD • 1920×1080 (20 Mbps Moto Crisp)"
-                    Quality.HD -> "720p HD • 1280×720 (14 Mbps Moto)"
-                    Quality.SD -> "480p SD • 720×480 (8 Mbps)"
+                    Quality.UHD -> "4K UHD • 3840×2160 (High Profile)"
+                    Quality.FHD -> "1080p FHD • 1920×1080 (High Profile)"
+                    Quality.HD -> "720p HD • 1280×720 (High Profile)"
+                    Quality.SD -> "480p SD • 720×480"
                     else -> "1080p FHD • 1920×1080"
                 }
 
                 val fps = _targetFps.value
-                // Motorola VideoHelper hardware bitrates:
-                // 4K UHD 60 FPS: 0x3c14dc0 = 63,000,000 bps (63 Mbps)
-                // 4K UHD 30 FPS: 0x2faf080 = 50,000,000 bps (50 Mbps)
-                // 1080p FHD 60 FPS: 0x1e84800 = 32,000,000 bps (32 Mbps)
-                // 1080p FHD 30 FPS: 0x1312d00 = 20,000,000 bps (20 Mbps)
-                // 720p HD: 0xd59f80 = 14,000,000 bps (14 Mbps)
                 val targetBitRate = when (quality) {
-                    Quality.UHD -> if (fps >= 60) 63_000_000 else 50_000_000
-                    Quality.FHD -> if (fps >= 60) 32_000_000 else 20_000_000
-                    Quality.HD -> 14_000_000
-                    else -> 8_000_000
+                    Quality.UHD -> if (fps >= 60) 40_000_000 else 30_000_000
+                    Quality.FHD -> if (fps >= 60) 24_000_000 else 18_000_000
+                    Quality.HD -> 10_000_000
+                    else -> 6_000_000
                 }
 
-                val recorder = Recorder.Builder()
+                val recorderBuilder = Recorder.Builder()
                     .setQualitySelector(qualitySelector)
-                    .setAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
-                    .setTargetVideoEncodingBitRate(targetBitRate)
-                    .build()
 
+                try {
+                    recorderBuilder.setTargetVideoEncodingBitRate(targetBitRate)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cannot set target bitrate: ${e.message}")
+                }
+
+                val recorder = recorderBuilder.build()
                 val videoCaptureBuilder = VideoCapture.Builder(recorder)
 
                 val camera2Extender = Camera2Interop.Extender(videoCaptureBuilder)
@@ -590,6 +592,7 @@ object RecordingManager {
 
         val capture = videoCapture ?: run {
             Log.e(TAG, "VideoCapture is null when starting recording")
+            Toast.makeText(context, "Camera is still initializing, please try again in a second", Toast.LENGTH_SHORT).show()
             return
         }
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
@@ -676,7 +679,19 @@ object RecordingManager {
                         _recordingState.value = RecordingState.IDLE
                         _recordingDurationMs.value = 0L
                         if (recordEvent.hasError()) {
-                            Log.w(TAG, "Video capture finalized with code: ${recordEvent.error}")
+                            val errorDesc = when (recordEvent.error) {
+                                VideoRecordEvent.Finalize.ERROR_ENCODING_FAILED -> "Encoder failed for chosen resolution/bitrate"
+                                VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED -> "File size limit reached"
+                                VideoRecordEvent.Finalize.ERROR_INSUFFICIENT_STORAGE -> "Insufficient storage space"
+                                VideoRecordEvent.Finalize.ERROR_INVALID_OUTPUT_OPTIONS -> "Invalid output options"
+                                VideoRecordEvent.Finalize.ERROR_NO_VALID_DATA -> "No video data recorded"
+                                VideoRecordEvent.Finalize.ERROR_RECORDER_ERROR -> "Camera recorder error"
+                                VideoRecordEvent.Finalize.ERROR_RECORDING_GARBAGE_COLLECTED -> "Recorder was disposed"
+                                VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE -> "Camera stream inactive"
+                                else -> "Recording error (code: ${recordEvent.error})"
+                            }
+                            Log.e(TAG, "Video capture finalized with code: ${recordEvent.error} - $errorDesc", recordEvent.cause)
+                            Toast.makeText(context, "⚠️ $errorDesc", Toast.LENGTH_LONG).show()
                         }
                         if (rawFile != null && rawFile.exists()) {
                             rawFile.delete()
