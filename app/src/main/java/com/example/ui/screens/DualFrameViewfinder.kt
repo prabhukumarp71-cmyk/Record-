@@ -133,13 +133,6 @@ fun DualFrameViewfinder(
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                     currentPreviewViewInstance = this
                     RecordingManager.setSurfaceProvider(this.surfaceProvider)
-                    RecordingManager.bindCamera(
-                        context = ctx,
-                        lifecycleOwner = lifecycleOwner,
-                        lensFacing = lensFacing,
-                        quality = targetQuality,
-                        surfaceProvider = this.surfaceProvider
-                    )
                 }
             },
             update = { view ->

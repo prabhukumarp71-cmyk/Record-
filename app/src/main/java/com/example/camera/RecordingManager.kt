@@ -202,52 +202,66 @@ object RecordingManager {
                     null
                 }
 
-                val qualitySelector = when (quality) {
-                    Quality.UHD -> QualitySelector.from(
-                        Quality.UHD,
-                        FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
-                    )
-                    Quality.FHD -> QualitySelector.from(
-                        Quality.FHD,
-                        FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
-                    )
-                    Quality.HD -> QualitySelector.from(
-                        Quality.HD,
-                        FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
-                    )
-                    Quality.SD -> QualitySelector.from(
-                        Quality.SD,
-                        FallbackStrategy.higherQualityOrLowerThan(Quality.SD)
-                    )
-                    else -> QualitySelector.from(
-                        Quality.FHD,
-                        FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
-                    )
+                val supportedQualities: List<Quality> = cameraInfo?.let { info ->
+                    try {
+                        Recorder.getVideoCapabilities(info).getSupportedQualities(androidx.camera.core.DynamicRange.SDR)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to get supported qualities: ${e.message}")
+                        emptyList<Quality>()
+                    }
+                } ?: emptyList<Quality>()
+
+                Log.d(TAG, "Supported video qualities: $supportedQualities, requested: $quality")
+
+                val preferredQualities = mutableListOf<Quality>()
+                preferredQualities.add(quality)
+                if (supportedQualities.isNotEmpty()) {
+                    supportedQualities.forEach { q ->
+                        if (!preferredQualities.contains(q)) {
+                            preferredQualities.add(q)
+                        }
+                    }
+                }
+                listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD, Quality.LOWEST).forEach { q ->
+                    if (!preferredQualities.contains(q)) {
+                        preferredQualities.add(q)
+                    }
                 }
 
-                _activeQualityDescription.value = when (quality) {
+                val qualitySelector = QualitySelector.fromOrderedList(
+                    preferredQualities,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.LOWEST)
+                )
+
+                val resolvedQuality = when {
+                    supportedQualities.contains(quality) -> quality
+                    supportedQualities.isNotEmpty() -> supportedQualities.first()
+                    else -> quality
+                }
+
+                _activeQualityDescription.value = when (resolvedQuality) {
                     Quality.UHD -> "4K UHD • 3840×2160 (High Profile)"
                     Quality.FHD -> "1080p FHD • 1920×1080 (High Profile)"
                     Quality.HD -> "720p HD • 1280×720 (High Profile)"
                     Quality.SD -> "480p SD • 720×480"
-                    else -> "1080p FHD • 1920×1080"
-                }
-
-                val fps = _targetFps.value
-                val targetBitRate = when (quality) {
-                    Quality.UHD -> if (fps >= 60) 40_000_000 else 30_000_000
-                    Quality.FHD -> if (fps >= 60) 24_000_000 else 18_000_000
-                    Quality.HD -> 10_000_000
-                    else -> 6_000_000
+                    else -> "HD Standard"
                 }
 
                 val recorderBuilder = Recorder.Builder()
                     .setQualitySelector(qualitySelector)
 
-                try {
-                    recorderBuilder.setTargetVideoEncodingBitRate(targetBitRate)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Cannot set target bitrate: ${e.message}")
+                if (resolvedQuality == Quality.UHD || resolvedQuality == Quality.FHD) {
+                    val fps = _targetFps.value
+                    val targetBitRate = if (resolvedQuality == Quality.UHD) {
+                        if (fps >= 60) 40_000_000 else 30_000_000
+                    } else {
+                        if (fps >= 60) 24_000_000 else 18_000_000
+                    }
+                    try {
+                        recorderBuilder.setTargetVideoEncodingBitRate(targetBitRate)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Cannot set target bitrate: ${e.message}")
+                    }
                 }
 
                 val recorder = recorderBuilder.build()
@@ -372,15 +386,68 @@ object RecordingManager {
                         *useCases.toTypedArray()
                     )
                     humanTracker.attachCamera(camera, imageAnalysis)
+                    if (_recordingState.value == RecordingState.ERROR) {
+                        _recordingState.value = RecordingState.IDLE
+                    }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Binding all use cases failed, fallback without ImageAnalysis: ${e.message}")
+                    Log.w(TAG, "Binding with all use cases failed: ${e.message}, attempting fallback without ImageAnalysis...")
                     imageAnalysis?.let { useCases.remove(it) }
-                    camera = cameraProvider?.bindToLifecycle(
-                        lifecycleOwner,
-                        cameraSelector,
-                        *useCases.toTypedArray()
-                    )
-                    humanTracker.attachCamera(camera, null)
+                    try {
+                        camera = cameraProvider?.bindToLifecycle(
+                            lifecycleOwner,
+                            cameraSelector,
+                            *useCases.toTypedArray()
+                        )
+                        humanTracker.attachCamera(camera, null)
+                        if (_recordingState.value == RecordingState.ERROR) {
+                            _recordingState.value = RecordingState.IDLE
+                        }
+                    } catch (e2: Exception) {
+                        Log.w(TAG, "Binding with videoCapture failed: ${e2.message}, attempting lowest quality fallback...")
+                        try {
+                            videoCapture?.let { useCases.remove(it) }
+                            val fallbackRecorder = Recorder.Builder()
+                                .setQualitySelector(
+                                    QualitySelector.from(
+                                        Quality.LOWEST,
+                                        FallbackStrategy.higherQualityOrLowerThan(Quality.LOWEST)
+                                    )
+                                ).build()
+                            val fallbackVideoCapture = VideoCapture.Builder(fallbackRecorder).build()
+                            videoCapture = fallbackVideoCapture
+                            useCases.add(fallbackVideoCapture)
+
+                            camera = cameraProvider?.bindToLifecycle(
+                                lifecycleOwner,
+                                cameraSelector,
+                                *useCases.toTypedArray()
+                            )
+                            humanTracker.attachCamera(camera, null)
+                            if (_recordingState.value == RecordingState.ERROR) {
+                                _recordingState.value = RecordingState.IDLE
+                            }
+                            Log.i(TAG, "Successfully bound camera with lowest quality VideoCapture")
+                        } catch (e3: Exception) {
+                            Log.e(TAG, "VideoCapture not supported on this device/emulator: ${e3.message}. Falling back to preview-only mode.")
+                            videoCapture?.let { useCases.remove(it) }
+                            videoCapture = null
+                            try {
+                                camera = cameraProvider?.bindToLifecycle(
+                                    lifecycleOwner,
+                                    cameraSelector,
+                                    *useCases.toTypedArray()
+                                )
+                                humanTracker.attachCamera(camera, null)
+                                if (_recordingState.value == RecordingState.ERROR) {
+                                    _recordingState.value = RecordingState.IDLE
+                                }
+                                Log.i(TAG, "Successfully bound preview-only mode")
+                            } catch (e4: Exception) {
+                                Log.e(TAG, "Fatal: unable to bind camera preview", e4)
+                                _recordingState.value = RecordingState.ERROR
+                            }
+                        }
+                    }
                 }
 
                 if (_isFarFocusOnly.value) {
@@ -390,7 +457,7 @@ object RecordingManager {
                 applyCameraSettings()
                 onBound?.invoke()
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to bind camera", e)
+                Log.e(TAG, "Failed in camera provider listener", e)
                 _recordingState.value = RecordingState.ERROR
             }
         }, ContextCompat.getMainExecutor(context))
