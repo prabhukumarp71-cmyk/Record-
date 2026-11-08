@@ -86,8 +86,11 @@ object RecordingManager {
     private val _tapMeterPoint = MutableStateFlow<Pair<Float, Float>?>(null)
     val tapMeterPoint: StateFlow<Pair<Float, Float>?> = _tapMeterPoint
 
-    private val _dualFormatEnabled = MutableStateFlow(true)
+    private val _dualFormatEnabled = MutableStateFlow(false)
     val dualFormatEnabled: StateFlow<Boolean> = _dualFormatEnabled
+
+    private val _exposureRange = MutableStateFlow(Pair(-6, 6))
+    val exposureRange: StateFlow<Pair<Int, Int>> = _exposureRange
 
     private val _isProcessingDualFormat = MutableStateFlow(false)
     val isProcessingDualFormat: StateFlow<Boolean> = _isProcessingDualFormat
@@ -381,10 +384,10 @@ object RecordingManager {
                 }
 
                 if (_isFarFocusOnly.value) {
-                    applyFarFocus()
+                    setFarFocusOnly(true)
                 }
 
-                applyExposure()
+                applyCameraSettings()
                 onBound?.invoke()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to bind camera", e)
@@ -403,52 +406,49 @@ object RecordingManager {
         _exposureCompensationStep.value = step
         _exposureIndex.value = exposureState.exposureCompensationIndex
         _exposureEvValue.value = exposureState.exposureCompensationIndex * step
+        _exposureRange.value = Pair(exposureState.exposureCompensationRange.lower, exposureState.exposureCompensationRange.upper)
     }
 
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
-    private fun applyFarFocus() {
+    fun setFarFocusOnly(enabled: Boolean) {
+        _isFarFocusOnly.value = enabled
+        _isFocusLocked.value = enabled
         val currentCam = camera ?: return
         val cameraControl = currentCam.cameraControl
         val camera2Control = Camera2CameraControl.from(cameraControl)
-        val captureOptions = CaptureRequestOptions.Builder()
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-            .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
-            .build()
-        camera2Control.setCaptureRequestOptions(captureOptions)
-    }
-
-    fun setExposureMode(mode: Int) {
-        _exposureMode.value = mode
-        applyExposure()
-    }
-
-    fun setExposureCompensation(value: Float) {
-        _exposureCompensation.value = value.coerceIn(-1.0f, 1.0f)
-        applyExposure()
+        if (enabled) {
+            cameraControl.cancelFocusAndMetering()
+            val captureOptions = CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
+                .build()
+            camera2Control.setCaptureRequestOptions(captureOptions)
+            Log.d(TAG, "Far Focus Locked at Infinity (0.0f)")
+        } else {
+            val captureOptions = CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                .build()
+            camera2Control.setCaptureRequestOptions(captureOptions)
+            cameraControl.cancelFocusAndMetering()
+            Log.d(TAG, "Restored Continuous Video Auto-Focus")
+        }
     }
 
     fun setExposureIndex(index: Int) {
-        _exposureIndex.value = index
-        camera?.cameraControl?.setExposureCompensationIndex(index)
-        _exposureEvValue.value = index * _exposureCompensationStep.value
+        val currentCam = camera ?: return
+        val range = currentCam.cameraInfo.exposureState.exposureCompensationRange
+        val clamped = index.coerceIn(range.lower, range.upper)
+        _exposureIndex.value = clamped
+        try {
+            currentCam.cameraControl.setExposureCompensationIndex(clamped)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to set exposure index: ${e.message}")
+        }
+        _exposureEvValue.value = clamped * _exposureCompensationStep.value
     }
 
-    private fun applyExposure() {
-        val currentCam = camera ?: return
-        val cameraInfo = currentCam.cameraInfo
-        val range = cameraInfo.exposureState.exposureCompensationRange
-        val targetIndex = if (_nightModeEnabled.value) {
-            (range.upper * 0.75f).toInt()
-        } else if (_exposureMode.value == 1) {
-            val fraction = (_exposureCompensation.value + 1.0f) / 2.0f
-            (range.lower + fraction * (range.upper - range.lower)).toInt()
-        } else {
-            0
-        }
-        val clampedIndex = targetIndex.coerceIn(range.lower, range.upper)
-        currentCam.cameraControl.setExposureCompensationIndex(clampedIndex)
-        _exposureIndex.value = clampedIndex
-        _exposureEvValue.value = clampedIndex * _exposureCompensationStep.value
+    fun resetExposure() {
+        setExposureIndex(0)
     }
 
     fun clearTapMeterPoint() {
@@ -457,18 +457,6 @@ object RecordingManager {
 
     fun toggleFarFocusOnly() {
         setFarFocusOnly(!_isFarFocusOnly.value)
-    }
-
-    fun setFarFocusOnly(enabled: Boolean) {
-        _isFarFocusOnly.value = enabled
-        humanTracker.setFarFocusOnly(enabled)
-        if (enabled) {
-            _isFocusLocked.value = false
-            camera?.cameraControl?.cancelFocusAndMetering()
-            _exposureMode.value = 1
-            applyFarFocus()
-        }
-        applyCameraSettings()
     }
 
     fun toggleFocusLock() {
@@ -540,7 +528,7 @@ object RecordingManager {
         if (ctx != null && lifecycleOwner != null && _recordingState.value == RecordingState.IDLE) {
             bindCamera(ctx, lifecycleOwner, currentLensFacing, currentQuality)
         } else {
-            applyExposure()
+            applyCameraSettings()
         }
     }
 

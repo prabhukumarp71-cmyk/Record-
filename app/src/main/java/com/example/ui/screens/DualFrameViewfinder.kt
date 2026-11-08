@@ -1,13 +1,15 @@
 package com.example.ui.screens
 
-import android.view.TextureView
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,39 +17,34 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cameraswitch
-import androidx.compose.material.icons.filled.CenterFocusStrong
-import androidx.compose.material.icons.filled.CenterFocusWeak
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Landscape
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material.icons.outlined.Bedtime
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,21 +52,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.camera.RecordingManager
+import com.example.model.RecordingState
+import com.example.settings.AppSettings
+import java.util.Locale
 
 @Composable
 fun DualFrameViewfinder(
@@ -78,30 +75,21 @@ fun DualFrameViewfinder(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    val qualityName by com.example.settings.AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
-    val cameraLensName by com.example.settings.AppSettings.getCameraLens(context).collectAsState(initial = "BACK")
+    val qualityName by AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
+    val cameraLensName by AppSettings.getCameraLens(context).collectAsState(initial = "BACK")
 
     val recordingState by RecordingManager.recordingState.collectAsState()
     val isTorchOn by RecordingManager.isTorchOn.collectAsState()
     val zoomRatio by RecordingManager.zoomRatio.collectAsState()
     val isFarFocusOnly by RecordingManager.isFarFocusOnly.collectAsState()
-    val isNightMode by RecordingManager.nightModeEnabled.collectAsState()
-    val isFocusLocked by RecordingManager.isFocusLocked.collectAsState()
-    val exposureCompensation by RecordingManager.exposureCompensation.collectAsState()
-    val exposureMode by RecordingManager.exposureMode.collectAsState()
+    val exposureIndex by RecordingManager.exposureIndex.collectAsState()
+    val exposureEvValue by RecordingManager.exposureEvValue.collectAsState()
+    val exposureRange by RecordingManager.exposureRange.collectAsState()
     val tapMeterPoint by RecordingManager.tapMeterPoint.collectAsState()
     val activeQualityDesc by RecordingManager.activeQualityDescription.collectAsState()
-    val targetFps by RecordingManager.targetFps.collectAsState()
-    val cropPosition by RecordingManager.cropPosition.collectAsState()
-    val dualFormatEnabled by RecordingManager.dualFormatEnabled.collectAsState()
 
-    val trackedPersons by RecordingManager.humanTracker.trackedPersons.collectAsState()
-    val humanAfEnabled by RecordingManager.humanTracker.humanAfEnabled.collectAsState()
-    val afMode by RecordingManager.humanTracker.afMode.collectAsState()
-
-    var previewTextureView by remember { mutableStateOf<TextureView?>(null) }
+    var showExposureSlider by remember { mutableStateOf(false) }
     var currentPreviewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
-    var showPip by remember { mutableStateOf(true) }
 
     val targetQuality = RecordingManager.parseQuality(qualityName)
     val lensFacing = if (cameraLensName == "FRONT") {
@@ -110,9 +98,9 @@ fun DualFrameViewfinder(
         androidx.camera.core.CameraSelector.LENS_FACING_BACK
     }
 
-    androidx.compose.runtime.LaunchedEffect(qualityName, cameraLensName, lifecycleOwner, currentPreviewViewInstance) {
+    LaunchedEffect(qualityName, cameraLensName, lifecycleOwner, currentPreviewViewInstance) {
         val pv = currentPreviewViewInstance ?: return@LaunchedEffect
-        if (recordingState == com.example.model.RecordingState.IDLE) {
+        if (recordingState == RecordingState.IDLE) {
             RecordingManager.bindCamera(
                 context = context,
                 lifecycleOwner = lifecycleOwner,
@@ -128,10 +116,7 @@ fun DualFrameViewfinder(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        val screenWidth = maxWidth
-        val screenHeight = maxHeight
-
-        // Main camera preview
+        // High-performance camera preview
         AndroidView(
             modifier = Modifier
                 .fillMaxSize()
@@ -155,16 +140,6 @@ fun DualFrameViewfinder(
                         quality = targetQuality,
                         surfaceProvider = this.surfaceProvider
                     )
-                    // Retrieve child TextureView for mirror companion
-                    post {
-                        for (i in 0 until childCount) {
-                            val child = getChildAt(i)
-                            if (child is TextureView) {
-                                previewTextureView = child
-                                break
-                            }
-                        }
-                    }
                 }
             },
             update = { view ->
@@ -172,194 +147,330 @@ fun DualFrameViewfinder(
                     currentPreviewViewInstance = view
                 }
                 RecordingManager.setSurfaceProvider(view.surfaceProvider)
-                if (previewTextureView == null) {
-                    for (i in 0 until view.childCount) {
-                        val child = view.getChildAt(i)
-                        if (child is TextureView) {
-                            previewTextureView = child
-                            break
-                        }
-                    }
-                }
             }
         )
 
-        // Overlay: Human tracking bounding boxes and metering points
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val canvasW = size.width
-            val canvasH = size.height
-
-            // Human AF bounding boxes
-            if (humanAfEnabled) {
-                for (person in trackedPersons) {
-                    val rect = person.boundingBox
-                    val left = rect.left * canvasW
-                    val top = rect.top * canvasH
-                    val width = rect.width() * canvasW
-                    val height = rect.height() * canvasH
-
-                    val boxColor = if (person.isSelected) Color(0xFF00E676) else Color(0xFFFFEB3B)
-                    drawRect(
-                        color = boxColor,
-                        topLeft = Offset(left, top),
-                        size = Size(width, height),
-                        style = Stroke(width = 3.dp.toPx())
-                    )
-                }
-            }
-
-            // Tap metering point
-            tapMeterPoint?.let { (x, y) ->
+        // Tap-to-meter focus indicator
+        tapMeterPoint?.let { (x, y) ->
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val canvasW = size.width
+                val canvasH = size.height
                 val px = x * canvasW
                 val py = y * canvasH
                 drawCircle(
                     color = Color.Yellow,
-                    radius = 24.dp.toPx(),
+                    radius = 28.dp.toPx(),
                     center = Offset(px, py),
                     style = Stroke(width = 2.dp.toPx())
                 )
                 drawLine(
                     color = Color.Yellow,
-                    start = Offset(px - 16.dp.toPx(), py),
-                    end = Offset(px + 16.dp.toPx(), py),
+                    start = Offset(px - 14.dp.toPx(), py),
+                    end = Offset(px + 14.dp.toPx(), py),
                     strokeWidth = 2.dp.toPx()
                 )
                 drawLine(
                     color = Color.Yellow,
-                    start = Offset(px, py - 16.dp.toPx()),
-                    end = Offset(px, py + 16.dp.toPx()),
+                    start = Offset(px, py - 14.dp.toPx()),
+                    end = Offset(px, py + 14.dp.toPx()),
                     strokeWidth = 2.dp.toPx()
                 )
             }
-
-            // Dual format guide lines (Horizontal 16:9 box guide on portrait preview)
-            if (dualFormatEnabled) {
-                val boxH = (canvasW * 9f) / 16f
-                val maxTop = (canvasH - boxH).coerceAtLeast(0f)
-                val boxTop = maxTop * cropPosition
-
-                // Semi-transparent dimming outside the 16:9 crop guide
-                drawRect(
-                    color = Color(0x66000000),
-                    topLeft = Offset(0f, 0f),
-                    size = Size(canvasW, boxTop)
-                )
-                drawRect(
-                    color = Color(0x66000000),
-                    topLeft = Offset(0f, boxTop + boxH),
-                    size = Size(canvasW, canvasH - (boxTop + boxH))
-                )
-
-                // 16:9 Guide Frame
-                drawRect(
-                    color = Color(0xFF00E5FF).copy(alpha = 0.85f),
-                    topLeft = Offset(0f, boxTop),
-                    size = Size(canvasW, boxH),
-                    style = Stroke(width = 2.dp.toPx())
-                )
-            }
         }
 
-        // Top Quality Banner
-        Row(
+        // Top Status Banners (Far Focus Lock + EV Info)
+        Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(top = 56.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            // Far Focus Lock Status Pill (Tap to toggle)
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color.Black.copy(alpha = 0.65f),
-                contentColor = Color.White
+                shape = RoundedCornerShape(20.dp),
+                color = if (isFarFocusOnly) Color(0xFF00E5FF).copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.6f),
+                border = if (isFarFocusOnly) null else androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
+                modifier = Modifier
+                    .testTag("far_focus_status_pill")
+                    .clickable {
+                        RecordingManager.toggleFarFocusOnly()
+                    }
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .background(Color(0xFF00E676), CircleShape)
+                    Icon(
+                        imageVector = if (isFarFocusOnly) Icons.Default.Lock else Icons.Default.Landscape,
+                        contentDescription = null,
+                        tint = if (isFarFocusOnly) Color.Black else Color.White,
+                        modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = activeQualityDesc,
+                        text = if (isFarFocusOnly) "FAR OBJECTS ONLY (FOCUS LOCKED)" else "FOCUS: AUTO",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "• ${targetFps} FPS",
-                        fontSize = 12.sp,
-                        color = Color(0xFF00E5FF)
+                        color = if (isFarFocusOnly) Color.Black else Color.White
                     )
                 }
             }
 
-            if (dualFormatEnabled) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF00E5FF).copy(alpha = 0.25f),
-                    contentColor = Color(0xFF00E5FF),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF))
+            // Exposure Value Readout Badge (Tap to open/close EV slider)
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = if (exposureIndex != 0) Color(0xFFFFB300).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.55f),
+                modifier = Modifier
+                    .testTag("exposure_value_badge")
+                    .clickable {
+                        showExposureSlider = !showExposureSlider
+                    }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    Icon(
+                        imageVector = Icons.Default.WbSunny,
+                        contentDescription = "Exposure",
+                        tint = if (exposureIndex != 0) Color.Black else Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
                     Text(
-                        text = "📱 9:16 + 🖥️ 16:9",
+                        text = String.format(Locale.US, "%+.1f EV", exposureEvValue),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        color = if (exposureIndex != 0) Color.Black else Color.White
                     )
                 }
             }
         }
 
-        // Picture-In-Picture Companion Preview (Synchronized 16:9 Horizontal Crop Preview)
-        if (dualFormatEnabled && showPip && previewTextureView != null) {
+        // Exposure Control Slider Overlay (Smooth, clean slide-in)
+        AnimatedVisibility(
+            visible = showExposureSlider,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 24.dp)
+        ) {
             Card(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 64.dp, end = 16.dp)
-                    .width(130.dp)
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .border(2.dp, Color(0xFF00E5FF), RoundedCornerShape(8.dp)),
-                colors = CardDefaults.cardColors(containerColor = Color.Black)
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.85f)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFB300).copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth(0.92f)
             ) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        MirrorFrameView(ctx).apply {
-                            this.cropPosition = cropPosition
-                            previewTextureView?.let { startMirroring(it) }
-                        }
-                    },
-                    update = { view ->
-                        view.cropPosition = cropPosition
-                        previewTextureView?.let { view.startMirroring(it) }
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Exposure Compensation",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = String.format(Locale.US, "%+.1f EV", exposureEvValue),
+                            color = Color(0xFFFFB300),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
-                )
+
+                    // Slider row with [-] and [+] buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IconButton(
+                            onClick = {
+                                RecordingManager.setExposureIndex(exposureIndex - 1)
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                        ) {
+                            Icon(Icons.Default.Remove, contentDescription = "Decrease EV", tint = Color.White)
+                        }
+
+                        val minVal = exposureRange.first.toFloat()
+                        val maxVal = exposureRange.second.toFloat()
+                        val currentVal = exposureIndex.toFloat().coerceIn(minVal, maxVal)
+
+                        Slider(
+                            value = currentVal,
+                            onValueChange = { newVal ->
+                                RecordingManager.setExposureIndex(newVal.toInt())
+                            },
+                            valueRange = minVal..maxVal,
+                            steps = (maxVal - minVal).toInt().coerceAtLeast(0),
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFFFFB300),
+                                activeTrackColor = Color(0xFFFFB300),
+                                inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("exposure_slider")
+                        )
+
+                        IconButton(
+                            onClick = {
+                                RecordingManager.setExposureIndex(exposureIndex + 1)
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Increase EV", tint = Color.White)
+                        }
+                    }
+
+                    // Reset and Close buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.White.copy(alpha = 0.15f),
+                            modifier = Modifier.clickable {
+                                RecordingManager.resetExposure()
+                            }
+                        ) {
+                            Text(
+                                text = "Reset to 0 EV",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFFFFB300).copy(alpha = 0.25f),
+                            modifier = Modifier.clickable {
+                                showExposureSlider = false
+                            }
+                        ) {
+                            Text(
+                                text = "Done",
+                                color = Color(0xFFFFB300),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
 
-        // Quick Controls Vertical Rail (Right Side)
+        // Clean Quick Controls Rail (Right Side)
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(end = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Dedicated Far Focus Lock Button
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                IconButton(
+                    onClick = { RecordingManager.toggleFarFocusOnly() },
+                    modifier = Modifier
+                        .testTag("far_focus_lock_button")
+                        .size(46.dp)
+                        .background(
+                            if (isFarFocusOnly) Color(0xFF00E5FF).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.55f),
+                            CircleShape
+                        )
+                        .border(
+                            1.dp,
+                            if (isFarFocusOnly) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.3f),
+                            CircleShape
+                        )
+                ) {
+                    Icon(
+                        imageVector = if (isFarFocusOnly) Icons.Default.Lock else Icons.Default.Landscape,
+                        contentDescription = "Far Focus Lock",
+                        tint = if (isFarFocusOnly) Color.Black else Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Text(
+                    text = if (isFarFocusOnly) "LOCKED" else "FAR AF",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (isFarFocusOnly) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.8f)
+                )
+            }
+
+            // Exposure Compensation Toggle Button
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                IconButton(
+                    onClick = { showExposureSlider = !showExposureSlider },
+                    modifier = Modifier
+                        .testTag("exposure_toggle_button")
+                        .size(46.dp)
+                        .background(
+                            if (showExposureSlider || exposureIndex != 0) Color(0xFFFFB300).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.55f),
+                            CircleShape
+                        )
+                        .border(
+                            1.dp,
+                            if (exposureIndex != 0) Color(0xFFFFB300) else Color.White.copy(alpha = 0.3f),
+                            CircleShape
+                        )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.WbSunny,
+                        contentDescription = "Exposure",
+                        tint = if (showExposureSlider || exposureIndex != 0) Color.Black else Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Text(
+                    text = "EXP",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (exposureIndex != 0) Color(0xFFFFB300) else Color.White.copy(alpha = 0.8f)
+                )
+            }
+
             // Torch Button
             IconButton(
                 onClick = { RecordingManager.toggleTorch() },
                 modifier = Modifier
-                    .size(44.dp)
+                    .testTag("torch_button")
+                    .size(46.dp)
                     .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
             ) {
                 Icon(
                     imageVector = if (isTorchOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
                     contentDescription = "Torch",
-                    tint = if (isTorchOn) Color.Yellow else Color.White
+                    tint = if (isTorchOn) Color.Yellow else Color.White,
+                    modifier = Modifier.size(22.dp)
                 )
             }
 
@@ -367,129 +478,33 @@ fun DualFrameViewfinder(
             IconButton(
                 onClick = { RecordingManager.toggleZoom() },
                 modifier = Modifier
-                    .size(44.dp)
+                    .testTag("zoom_button")
+                    .size(46.dp)
                     .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
             ) {
                 Text(
                     text = if (zoomRatio > 1.5f) "2.0x" else "1.0x",
-                    color = if (zoomRatio > 1.5f) Color.Yellow else Color.White,
+                    color = if (zoomRatio > 1.5f) Color(0xFF00E5FF) else Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp
                 )
             }
 
-            // Flip Camera
+            // Flip Camera (Front / Back)
             IconButton(
                 onClick = { RecordingManager.toggleCamera() },
                 modifier = Modifier
-                    .size(44.dp)
+                    .testTag("flip_camera_button")
+                    .size(46.dp)
                     .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.Default.Cameraswitch,
                     contentDescription = "Switch Camera",
-                    tint = Color.White
-                )
-            }
-
-            // Human AF Toggle
-            IconButton(
-                onClick = { RecordingManager.humanTracker.toggleHumanAf() },
-                modifier = Modifier
-                    .size(44.dp)
-                    .background(
-                        if (humanAfEnabled) Color(0xFF00E676).copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.55f),
-                        CircleShape
-                    )
-            ) {
-                Icon(
-                    imageVector = if (humanAfEnabled) Icons.Default.CenterFocusStrong else Icons.Default.CenterFocusWeak,
-                    contentDescription = "Human AF",
-                    tint = if (humanAfEnabled) Color(0xFF00E676) else Color.White
-                )
-            }
-
-            // Night Mode Toggle
-            IconButton(
-                onClick = { RecordingManager.toggleNightMode() },
-                modifier = Modifier
-                    .size(44.dp)
-                    .background(
-                        if (isNightMode) Color(0xFF7C4DFF).copy(alpha = 0.45f) else Color.Black.copy(alpha = 0.55f),
-                        CircleShape
-                    )
-            ) {
-                Icon(
-                    imageVector = if (isNightMode) Icons.Default.Bedtime else Icons.Outlined.Bedtime,
-                    contentDescription = "Night Mode",
-                    tint = if (isNightMode) Color(0xFFB388FF) else Color.White
-                )
-            }
-
-            // Far Focus Only Toggle
-            IconButton(
-                onClick = { RecordingManager.toggleFarFocusOnly() },
-                modifier = Modifier
-                    .size(44.dp)
-                    .background(
-                        if (isFarFocusOnly) Color(0xFF00E5FF).copy(alpha = 0.45f) else Color.Black.copy(alpha = 0.55f),
-                        CircleShape
-                    )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Landscape,
-                    contentDescription = "Far Focus",
-                    tint = if (isFarFocusOnly) Color(0xFF00E5FF) else Color.White
-                )
-            }
-
-            // Lock Focus Toggle
-            IconButton(
-                onClick = { RecordingManager.toggleFocusLock() },
-                modifier = Modifier
-                    .size(44.dp)
-                    .background(
-                        if (isFocusLocked) Color.Red.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.55f),
-                        CircleShape
-                    )
-            ) {
-                Icon(
-                    imageVector = if (isFocusLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                    contentDescription = "Lock Focus",
-                    tint = if (isFocusLocked) Color.Red else Color.White
-                )
-            }
-        }
-
-        // Exposure Slider (When Manual Exposure is Active)
-        if (exposureMode == 1) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 140.dp, start = 24.dp, end = 24.dp)
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Exposure EV", color = Color.White, fontSize = 12.sp)
-                    Text(
-                        String.format("%.1f EV", exposureCompensation * 2.0f),
-                        color = Color.Yellow,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
-                    )
-                }
-                Slider(
-                    value = exposureCompensation,
-                    onValueChange = { RecordingManager.setExposureCompensation(it) },
-                    valueRange = -1f..1f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color.Yellow,
-                        activeTrackColor = Color.Yellow
-                    )
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
                 )
             }
         }

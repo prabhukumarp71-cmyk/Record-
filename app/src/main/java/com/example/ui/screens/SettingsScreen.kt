@@ -245,56 +245,6 @@ fun SettingsScreen(
                 }
             }
 
-            // Dual Format Output Section
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ViewCarousel,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Column {
-                                Text(
-                                    text = "Dual-Format Output",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp
-                                )
-                                Text(
-                                    text = "Generates Vertical (9:16) & Horizontal (16:9) simultaneously",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Switch(
-                            checked = isDualFormatEnabled,
-                            onCheckedChange = { checked ->
-                                scope.launch {
-                                    AppSettings.setDualFormatEnabled(context, checked)
-                                    RecordingManager.setDualFormatEnabled(checked)
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-
             // Target Framerate (FPS)
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),

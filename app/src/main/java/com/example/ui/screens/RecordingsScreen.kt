@@ -74,7 +74,6 @@ fun RecordingsScreen(
 
     var videos by remember { mutableStateOf<List<VideoMedia>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
-    var processingVideoName by remember { mutableStateOf<String?>(null) }
 
     fun refreshVideos() {
         scope.launch {
@@ -158,23 +157,8 @@ fun RecordingsScreen(
                     items(videos, key = { it.uri.toString() }) { video ->
                         VideoItemCard(
                             video = video,
-                            isProcessing = processingVideoName == video.name,
                             onClick = {
                                 onNavigateToPlayer(video.uri.toString(), video.companionUri?.toString())
-                            },
-                            onGenerateCompanion = {
-                                scope.launch {
-                                    processingVideoName = video.name
-                                    val companionUri = DualFormatVideoHelper.generateCompanionFormat(
-                                        context = context,
-                                        sourceUri = video.uri,
-                                        originalDisplayName = video.name
-                                    )
-                                    processingVideoName = null
-                                    if (companionUri != null) {
-                                        refreshVideos()
-                                    }
-                                }
                             }
                         )
                     }
@@ -187,9 +171,7 @@ fun RecordingsScreen(
 @Composable
 fun VideoItemCard(
     video: VideoMedia,
-    isProcessing: Boolean,
-    onClick: () -> Unit,
-    onGenerateCompanion: () -> Unit
+    onClick: () -> Unit
 ) {
     val durationText = formatDuration(video.duration)
     val sizeMbText = String.format(Locale.US, "%.1f MB", video.size.toDouble() / (1024 * 1024))
@@ -284,71 +266,6 @@ fun VideoItemCard(
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
-                        }
-                    }
-                }
-            }
-
-            // Companion format status & generator
-            if (video.companionUri != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF00E5FF).copy(alpha = 0.1f), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = "✨ Dual Format ready (Vertical + Horizontal companion paired)",
-                        fontSize = 11.sp,
-                        color = Color(0xFF0091EA),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            } else {
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Companion format not generated",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Button(
-                        onClick = onGenerateCompanion,
-                        enabled = !isProcessing,
-                        shape = RoundedCornerShape(6.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
-                        ),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(30.dp)
-                    ) {
-                        if (isProcessing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = Color.White
-                            )
-                        } else {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.AutoAwesome,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                val companionTarget = if (video.formatType == VideoFormatType.VERTICAL) "16:9" else "9:16"
-                                Text("Generate $companionTarget", fontSize = 11.sp)
-                            }
                         }
                     }
                 }

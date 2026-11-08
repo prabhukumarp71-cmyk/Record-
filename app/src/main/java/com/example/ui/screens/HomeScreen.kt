@@ -65,9 +65,6 @@ fun HomeScreen(
     val context = LocalContext.current
     val recordingState by RecordingManager.recordingState.collectAsState()
     val recordingDurationMs by RecordingManager.recordingDurationMs.collectAsState()
-    val isProcessingDual by RecordingManager.isProcessingDualFormat.collectAsState()
-    val dualFormatEnabled by RecordingManager.dualFormatEnabled.collectAsState()
-    val cropPosition by RecordingManager.cropPosition.collectAsState()
 
     val currentQuality by com.example.settings.AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -155,30 +152,11 @@ fun HomeScreen(
                     }
                 }
 
-                // Dual Format Toggle
-                IconButton(
-                    onClick = {
-                        RecordingManager.setDualFormatEnabled(!dualFormatEnabled)
-                    },
-                    modifier = Modifier
-                        .testTag("switch_to_dual_camera_button")
-                        .size(44.dp)
-                        .background(
-                            if (dualFormatEnabled) Color(0xFF00E5FF).copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.55f),
-                            CircleShape
-                        )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ViewCarousel,
-                        contentDescription = "Toggle Dual Format",
-                        tint = if (dualFormatEnabled) Color(0xFF00E5FF) else Color.White
-                    )
-                }
-
                 // Recordings Library Button
                 IconButton(
                     onClick = onNavigateToRecordings,
                     modifier = Modifier
+                        .testTag("recordings_button")
                         .size(44.dp)
                         .background(Color.Black.copy(alpha = 0.55f), CircleShape)
                 ) {
@@ -195,7 +173,7 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp, start = 16.dp, end = 16.dp),
+                    .padding(bottom = 32.dp, start = 16.dp, end = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -237,25 +215,36 @@ fun HomeScreen(
                 // Controls Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Framing Crop Position Toggle
-                    if (dualFormatEnabled) {
-                        IconButton(
-                            onClick = { RecordingManager.cycleCropPosition() },
+                    // Pause / Resume Button
+                    if (isBusy) {
+                        FilledTonalButton(
+                            onClick = {
+                                val action = if (isPaused) RecordingService.ACTION_RESUME else RecordingService.ACTION_PAUSE
+                                val intent = Intent(context, RecordingService::class.java).apply {
+                                    this.action = action
+                                }
+                                context.startService(intent)
+                            },
                             modifier = Modifier
-                                .size(48.dp)
-                                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                                .testTag("pause_resume_button")
+                                .size(48.dp),
+                            shape = CircleShape,
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = Color.Black.copy(alpha = 0.55f)
+                            ),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Crop,
-                                contentDescription = "Crop Position",
-                                tint = Color.White
+                                imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                contentDescription = if (isPaused) "Resume" else "Pause",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
                             )
                         }
-                    } else {
-                        Spacer(modifier = Modifier.size(48.dp))
+                        Spacer(modifier = Modifier.width(28.dp))
                     }
 
                     // Primary Record / Stop Button
@@ -301,71 +290,6 @@ fun HomeScreen(
                             contentDescription = if (isBusy) "Stop Recording" else "Start Recording",
                             modifier = Modifier.size(36.dp),
                             tint = if (isBusy) Color.White else Color.Red
-                        )
-                    }
-
-                    // Pause / Resume Button
-                    if (isBusy) {
-                        FilledTonalButton(
-                            onClick = {
-                                val action = if (isPaused) RecordingService.ACTION_RESUME else RecordingService.ACTION_PAUSE
-                                val intent = Intent(context, RecordingService::class.java).apply {
-                                    this.action = action
-                                }
-                                context.startService(intent)
-                            },
-                            modifier = Modifier
-                                .testTag("pause_resume_button")
-                                .size(48.dp),
-                            shape = CircleShape,
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = Color.Black.copy(alpha = 0.55f)
-                            ),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                contentDescription = if (isPaused) "Resume" else "Pause",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    } else {
-                        Spacer(modifier = Modifier.size(48.dp))
-                    }
-                }
-            }
-
-            // Post-processing indicator
-            AnimatedVisibility(
-                visible = isProcessingDual,
-                modifier = Modifier.align(Alignment.Center)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color.Black.copy(alpha = 0.85f),
-                    contentColor = Color.White,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            color = Color(0xFF00E5FF),
-                            strokeWidth = 3.dp
-                        )
-                        Text(
-                            text = "Saving High Quality Videos...",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Encoding in Master Bitrate",
-                            fontSize = 12.sp,
-                            color = Color.Gray
                         )
                     }
                 }
