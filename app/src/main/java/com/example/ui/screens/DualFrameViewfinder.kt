@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Landscape
@@ -51,6 +52,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +69,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.camera.RecordingManager
 import com.example.model.RecordingState
 import com.example.settings.AppSettings
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 @Composable
@@ -74,14 +77,17 @@ fun DualFrameViewfinder(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     val qualityName by AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
     val cameraLensName by AppSettings.getCameraLens(context).collectAsState(initial = "BACK")
+    val savedAspectRatio by AppSettings.getAspectRatio(context).collectAsState(initial = "16:9")
 
     val recordingState by RecordingManager.recordingState.collectAsState()
     val isTorchOn by RecordingManager.isTorchOn.collectAsState()
     val zoomRatio by RecordingManager.zoomRatio.collectAsState()
     val isFarFocusOnly by RecordingManager.isFarFocusOnly.collectAsState()
+    val selectedAspectRatio by RecordingManager.selectedAspectRatio.collectAsState()
     val exposureIndex by RecordingManager.exposureIndex.collectAsState()
     val exposureEvValue by RecordingManager.exposureEvValue.collectAsState()
     val exposureRange by RecordingManager.exposureRange.collectAsState()
@@ -89,6 +95,10 @@ fun DualFrameViewfinder(
     val activeQualityDesc by RecordingManager.activeQualityDescription.collectAsState()
 
     var showExposureSlider by remember { mutableStateOf(false) }
+
+    LaunchedEffect(savedAspectRatio) {
+        RecordingManager.setAspectRatio(savedAspectRatio)
+    }
 
     val targetQuality = RecordingManager.parseQuality(qualityName)
     val lensFacing = if (cameraLensName == "FRONT") {
@@ -157,6 +167,65 @@ fun DualFrameViewfinder(
             update = { _ -> }
         )
 
+        // Aspect Ratio Framing Mask Guide
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val canvasW = size.width
+            val canvasH = size.height
+
+            val (frameW, frameH) = when (selectedAspectRatio) {
+                "9:16" -> {
+                    val targetW = canvasH * (9f / 16f)
+                    if (targetW <= canvasW) Pair(targetW, canvasH) else Pair(canvasW, canvasW * (16f / 9f))
+                }
+                "4:3" -> {
+                    val targetH = canvasW * (3f / 4f)
+                    if (targetH <= canvasH) Pair(canvasW, targetH) else Pair(canvasH * (4f / 3f), canvasH)
+                }
+                "1:1" -> {
+                    val side = minOf(canvasW, canvasH)
+                    Pair(side, side)
+                }
+                else -> {
+                    val targetH = canvasW * (9f / 16f)
+                    if (targetH <= canvasH) Pair(canvasW, targetH) else Pair(canvasH * (16f / 9f), canvasH)
+                }
+            }
+
+            val left = (canvasW - frameW) / 2f
+            val top = (canvasH - frameH) / 2f
+            val right = left + frameW
+            val bottom = top + frameH
+
+            if (selectedAspectRatio != "16:9") {
+                val maskColor = Color.Black.copy(alpha = 0.52f)
+                // Top mask
+                if (top > 0f) drawRect(color = maskColor, topLeft = Offset(0f, 0f), size = androidx.compose.ui.geometry.Size(canvasW, top))
+                // Bottom mask
+                if (bottom < canvasH) drawRect(color = maskColor, topLeft = Offset(0f, bottom), size = androidx.compose.ui.geometry.Size(canvasW, canvasH - bottom))
+                // Left mask
+                if (left > 0f) drawRect(color = maskColor, topLeft = Offset(0f, top), size = androidx.compose.ui.geometry.Size(left, frameH))
+                // Right mask
+                if (right < canvasW) drawRect(color = maskColor, topLeft = Offset(right, top), size = androidx.compose.ui.geometry.Size(canvasW - right, frameH))
+
+                // Corner framing brackets for selected ratio
+                val cornerLength = 22.dp.toPx()
+                val strokeW = 2.5.dp.toPx()
+                val guideColor = Color(0xFF00E5FF)
+
+                drawLine(guideColor, Offset(left, top), Offset(left + cornerLength, top), strokeW)
+                drawLine(guideColor, Offset(left, top), Offset(left, top + cornerLength), strokeW)
+
+                drawLine(guideColor, Offset(right, top), Offset(right - cornerLength, top), strokeW)
+                drawLine(guideColor, Offset(right, top), Offset(right, top + cornerLength), strokeW)
+
+                drawLine(guideColor, Offset(left, bottom), Offset(left + cornerLength, bottom), strokeW)
+                drawLine(guideColor, Offset(left, bottom), Offset(left, bottom - cornerLength), strokeW)
+
+                drawLine(guideColor, Offset(right, bottom), Offset(right - cornerLength, bottom), strokeW)
+                drawLine(guideColor, Offset(right, bottom), Offset(right, bottom - cornerLength), strokeW)
+            }
+        }
+
         // Tap-to-meter focus indicator
         tapMeterPoint?.let { (x, y) ->
             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -185,7 +254,7 @@ fun DualFrameViewfinder(
             }
         }
 
-        // Top Status Banners (Far Focus Lock + EV Info)
+        // Top Status Banners (Far Focus Lock + EV Info + Aspect Ratio)
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -224,33 +293,83 @@ fun DualFrameViewfinder(
                 }
             }
 
-            // Exposure Value Readout Badge (Tap to open/close EV slider)
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = if (exposureIndex != 0) Color(0xFFFFB300).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.55f),
-                modifier = Modifier
-                    .testTag("exposure_value_badge")
-                    .clickable {
-                        showExposureSlider = !showExposureSlider
-                    }
+            // Secondary Row: EV Badge + Aspect Ratio Pill
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                // Exposure Value Readout Badge (Tap to open/close EV slider)
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (exposureIndex != 0) Color(0xFFFFB300).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.55f),
+                    modifier = Modifier
+                        .testTag("exposure_value_badge")
+                        .clickable {
+                            showExposureSlider = !showExposureSlider
+                        }
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.WbSunny,
-                        contentDescription = "Exposure",
-                        tint = if (exposureIndex != 0) Color.Black else Color.White,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        text = String.format(Locale.US, "%+.1f EV", exposureEvValue),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (exposureIndex != 0) Color.Black else Color.White
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.WbSunny,
+                            contentDescription = "Exposure",
+                            tint = if (exposureIndex != 0) Color.Black else Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = String.format(Locale.US, "%+.1f EV", exposureEvValue),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (exposureIndex != 0) Color.Black else Color.White
+                        )
+                    }
+                }
+
+                // Aspect Ratio Pill (Tap to cycle ratio)
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (selectedAspectRatio != "16:9") Color(0xFF7C4DFF).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.55f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (selectedAspectRatio != "16:9") Color(0xFFB388FF) else Color.White.copy(alpha = 0.25f)
+                    ),
+                    modifier = Modifier
+                        .testTag("aspect_ratio_pill")
+                        .clickable {
+                            coroutineScope.launch {
+                                val next = RecordingManager.cycleAspectRatio()
+                                AppSettings.setAspectRatio(context, next)
+                                val label = when (next) {
+                                    "9:16" -> "9:16 Vertical (Shorts/Reels)"
+                                    "4:3" -> "4:3 Standard"
+                                    "1:1" -> "1:1 Square"
+                                    else -> "16:9 Widescreen"
+                                }
+                                android.widget.Toast.makeText(context, "📐 Aspect Ratio: $label", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Crop,
+                            contentDescription = "Aspect Ratio",
+                            tint = if (selectedAspectRatio != "16:9") Color.White else Color(0xFFB388FF),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = selectedAspectRatio,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
                 }
             }
         }
@@ -461,6 +580,53 @@ fun DualFrameViewfinder(
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (exposureIndex != 0) Color(0xFFFFB300) else Color.White.copy(alpha = 0.8f)
+                )
+            }
+
+            // Aspect Ratio Selector Button
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                IconButton(
+                    onClick = {
+                        coroutineScope.launch {
+                            val next = RecordingManager.cycleAspectRatio()
+                            AppSettings.setAspectRatio(context, next)
+                            val label = when (next) {
+                                "9:16" -> "9:16 Vertical (Shorts/Reels)"
+                                "4:3" -> "4:3 Standard"
+                                "1:1" -> "1:1 Square"
+                                else -> "16:9 Widescreen"
+                            }
+                            android.widget.Toast.makeText(context, "📐 Aspect Ratio: $label", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier
+                        .testTag("aspect_ratio_button")
+                        .size(46.dp)
+                        .background(
+                            if (selectedAspectRatio != "16:9") Color(0xFF7C4DFF).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.55f),
+                            CircleShape
+                        )
+                        .border(
+                            1.dp,
+                            if (selectedAspectRatio != "16:9") Color(0xFFB388FF) else Color.White.copy(alpha = 0.3f),
+                            CircleShape
+                        )
+                ) {
+                    Text(
+                        text = selectedAspectRatio,
+                        color = Color.White,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.sp
+                    )
+                }
+                Text(
+                    text = "RATIO",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (selectedAspectRatio != "16:9") Color(0xFFB388FF) else Color.White.copy(alpha = 0.8f)
                 )
             }
 

@@ -33,6 +33,8 @@ import kotlin.coroutines.resume
 enum class VideoFormatType(val label: String, val badge: String, val ratio: String) {
     VERTICAL("Vertical", "📱 9:16 Vertical", "9:16"),
     HORIZONTAL("Horizontal", "🖥️ 16:9 Horizontal", "16:9"),
+    SQUARE("Square", "🔲 1:1 Square", "1:1"),
+    RATIO_4_3("4:3 Standard", "📺 4:3 Classic", "4:3"),
     UNKNOWN("Standard", "🎬 Standard", "Auto")
 }
 
@@ -99,8 +101,14 @@ object DualFormatVideoHelper {
 
     fun detectVideoFormat(context: Context, uri: Uri, displayName: String? = null): VideoFormatType {
         val name = displayName ?: ""
-        if (name.contains("Vertical", ignoreCase = true) || name.endsWith("_V.mp4", ignoreCase = true)) {
+        if (name.contains("9x16", ignoreCase = true) || name.contains("Vertical", ignoreCase = true) || name.endsWith("_V.mp4", ignoreCase = true)) {
             return VideoFormatType.VERTICAL
+        }
+        if (name.contains("1x1", ignoreCase = true) || name.contains("Square", ignoreCase = true)) {
+            return VideoFormatType.SQUARE
+        }
+        if (name.contains("4x3", ignoreCase = true)) {
+            return VideoFormatType.RATIO_4_3
         }
         if (name.contains("Horizontal", ignoreCase = true) || name.endsWith("_H.mp4", ignoreCase = true)) {
             return VideoFormatType.HORIZONTAL
@@ -244,7 +252,8 @@ object DualFormatVideoHelper {
         baseName: String,
         isDual: Boolean,
         cropPosition: Float = 0.5f,
-        targetQuality: Quality = Quality.FHD
+        targetQuality: Quality = Quality.FHD,
+        aspectRatio: String = "16:9"
     ): ProcessedRecordingResult = withContext(Dispatchers.IO) {
         if (!rawFile.exists() || rawFile.length() == 0L) {
             Log.e(TAG, "Raw recording file is empty or missing")
@@ -253,66 +262,116 @@ object DualFormatVideoHelper {
 
         val meta = extractFileMeta(rawFile)
         val isVertical = meta.isVertical
-        Log.d(TAG, "Raw capture video: effective=${meta.effectiveWidth}x${meta.effectiveHeight}, rot=${meta.rotation}, isVertical=$isVertical")
+        Log.d(TAG, "Raw capture video: effective=${meta.effectiveWidth}x${meta.effectiveHeight}, rot=${meta.rotation}, isVertical=$isVertical, targetAspectRatio=$aspectRatio")
 
-        val primaryDisplayName = if (isDual) {
-            val suffix = if (isVertical) "_Vertical" else "_Horizontal"
-            "${baseName}${suffix}.mp4"
-        } else {
-            "${baseName}.mp4"
-        }
-
-        // Save original pristine high-bitrate master file directly
-        val primaryUri = saveFileToMediaStore(context, rawFile, primaryDisplayName)
-
+        var primaryUri: Uri? = null
         var companionUri: Uri? = null
-        if (isDual) {
-            val companionIsVertical = !isVertical
-            val (companionTargetW, companionTargetH) = when (targetQuality) {
-                Quality.UHD -> if (companionIsVertical) Pair(2160, 3840) else Pair(3840, 2160)
-                Quality.HD -> if (companionIsVertical) Pair(720, 1280) else Pair(1280, 720)
-                Quality.SD -> if (companionIsVertical) Pair(480, 720) else Pair(720, 480)
-                else -> if (companionIsVertical) Pair(1080, 1920) else Pair(1920, 1080)
-            }
 
-            val companionSuffix = if (companionIsVertical) "_Vertical" else "_Horizontal"
-            val companionDisplayName = "${baseName}${companionSuffix}.mp4"
-
-            val tempCompanion = File(context.cacheDir, "companion_${System.currentTimeMillis()}.mp4")
-            val companionEffects = mutableListOf<Effect>()
-
-            if (!companionIsVertical) {
-                if (cropPosition <= 0.3f) {
-                    companionEffects.add(Crop(-1f, 1f, 0.2f, 0.8328f))
-                } else if (cropPosition >= 0.7f) {
-                    companionEffects.add(Crop(-1f, 1f, -0.8328f, -0.2f))
+        // If a specific non-16:9 aspect ratio is requested (e.g. 9:16, 4:3, 1:1), apply Media3 crop/presentation
+        if (aspectRatio != "16:9") {
+            val (targetW, targetH) = when (aspectRatio) {
+                "9:16" -> when (targetQuality) {
+                    Quality.UHD -> Pair(2160, 3840)
+                    Quality.HD -> Pair(720, 1280)
+                    Quality.SD -> Pair(480, 854)
+                    else -> Pair(1080, 1920)
                 }
-                companionEffects.add(
-                    Presentation.createForWidthAndHeight(
-                        companionTargetW,
-                        companionTargetH,
-                        Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
-                    )
-                )
-            } else {
-                companionEffects.add(
-                    Presentation.createForWidthAndHeight(
-                        companionTargetW,
-                        companionTargetH,
-                        Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
-                    )
-                )
+                "4:3" -> when (targetQuality) {
+                    Quality.UHD -> Pair(2880, 2160)
+                    Quality.HD -> Pair(960, 720)
+                    Quality.SD -> Pair(640, 480)
+                    else -> Pair(1440, 1080)
+                }
+                "1:1" -> when (targetQuality) {
+                    Quality.UHD -> Pair(2160, 2160)
+                    Quality.HD -> Pair(720, 720)
+                    Quality.SD -> Pair(480, 480)
+                    else -> Pair(1080, 1080)
+                }
+                else -> Pair(1920, 1080)
             }
 
-            val companionSuccess = transformVideo(context, rawFile, tempCompanion, companionEffects, companionTargetW, companionTargetH)
-            if (companionSuccess && tempCompanion.exists() && tempCompanion.length() > 0L) {
-                companionUri = saveFileToMediaStore(context, tempCompanion, companionDisplayName)
-                Log.d(TAG, "Successfully created and saved companion video: $companionUri ($companionDisplayName)")
+            val ratioTag = aspectRatio.replace(":", "x")
+            val formattedDisplayName = "${baseName}_$ratioTag.mp4"
+            val tempCropFile = File(context.cacheDir, "crop_${System.currentTimeMillis()}.mp4")
+
+            val effects = listOf<Effect>(
+                Presentation.createForWidthAndHeight(
+                    targetW,
+                    targetH,
+                    Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+                )
+            )
+
+            val success = transformVideo(context, rawFile, tempCropFile, effects, targetW, targetH)
+            if (success && tempCropFile.exists() && tempCropFile.length() > 0L) {
+                primaryUri = saveFileToMediaStore(context, tempCropFile, formattedDisplayName)
+                Log.d(TAG, "Successfully saved cropped video in $aspectRatio to MediaStore: $primaryUri")
             } else {
-                Log.w(TAG, "Failed creating companion video")
+                Log.w(TAG, "Crop transformation to $aspectRatio failed, falling back to raw recording")
+                primaryUri = saveFileToMediaStore(context, rawFile, "${baseName}.mp4")
+            }
+            if (tempCropFile.exists()) tempCropFile.delete()
+        } else {
+            // Standard 16:9
+            val primaryDisplayName = if (isDual) {
+                val suffix = if (isVertical) "_Vertical" else "_Horizontal"
+                "${baseName}${suffix}.mp4"
+            } else {
+                "${baseName}.mp4"
             }
 
-            if (tempCompanion.exists()) tempCompanion.delete()
+            // Save original pristine high-bitrate master file directly
+            primaryUri = saveFileToMediaStore(context, rawFile, primaryDisplayName)
+
+            if (isDual) {
+                val companionIsVertical = !isVertical
+                val (companionTargetW, companionTargetH) = when (targetQuality) {
+                    Quality.UHD -> if (companionIsVertical) Pair(2160, 3840) else Pair(3840, 2160)
+                    Quality.HD -> if (companionIsVertical) Pair(720, 1280) else Pair(1280, 720)
+                    Quality.SD -> if (companionIsVertical) Pair(480, 720) else Pair(720, 480)
+                    else -> if (companionIsVertical) Pair(1080, 1920) else Pair(1920, 1080)
+                }
+
+                val companionSuffix = if (companionIsVertical) "_Vertical" else "_Horizontal"
+                val companionDisplayName = "${baseName}${companionSuffix}.mp4"
+
+                val tempCompanion = File(context.cacheDir, "companion_${System.currentTimeMillis()}.mp4")
+                val companionEffects = mutableListOf<Effect>()
+
+                if (!companionIsVertical) {
+                    if (cropPosition <= 0.3f) {
+                        companionEffects.add(Crop(-1f, 1f, 0.2f, 0.8328f))
+                    } else if (cropPosition >= 0.7f) {
+                        companionEffects.add(Crop(-1f, 1f, -0.8328f, -0.2f))
+                    }
+                    companionEffects.add(
+                        Presentation.createForWidthAndHeight(
+                            companionTargetW,
+                            companionTargetH,
+                            Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+                        )
+                    )
+                } else {
+                    companionEffects.add(
+                        Presentation.createForWidthAndHeight(
+                            companionTargetW,
+                            companionTargetH,
+                            Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+                        )
+                    )
+                }
+
+                val companionSuccess = transformVideo(context, rawFile, tempCompanion, companionEffects, companionTargetW, companionTargetH)
+                if (companionSuccess && tempCompanion.exists() && tempCompanion.length() > 0L) {
+                    companionUri = saveFileToMediaStore(context, tempCompanion, companionDisplayName)
+                    Log.d(TAG, "Successfully created and saved companion video: $companionUri ($companionDisplayName)")
+                } else {
+                    Log.w(TAG, "Failed creating companion video")
+                }
+
+                if (tempCompanion.exists()) tempCompanion.delete()
+            }
         }
 
         ProcessedRecordingResult(primaryUri, companionUri)
@@ -387,6 +446,9 @@ object DualFormatVideoHelper {
         val cleanBase = baseWithoutExt
             .replace("_Vertical", "")
             .replace("_Horizontal", "")
+            .replace("_9x16", "")
+            .replace("_4x3", "")
+            .replace("_1x1", "")
             .replace("_V", "")
             .replace("_H", "")
 
@@ -398,6 +460,9 @@ object DualFormatVideoHelper {
         return displayName.removeSuffix(".mp4").removeSuffix(".MP4")
             .replace("_Vertical", "")
             .replace("_Horizontal", "")
+            .replace("_9x16", "")
+            .replace("_4x3", "")
+            .replace("_1x1", "")
             .replace("_V", "")
             .replace("_H", "")
     }

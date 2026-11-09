@@ -19,6 +19,19 @@ object AppSettings {
     val KEY_CAMERA_LENS = stringPreferencesKey("camera_lens")
     val KEY_DUAL_FORMAT_ENABLED = booleanPreferencesKey("dual_format_enabled")
     val KEY_TARGET_FPS = intPreferencesKey("target_fps")
+    val KEY_ASPECT_RATIO = stringPreferencesKey("aspect_ratio")
+
+    fun getAspectRatio(context: Context): Flow<String> {
+        return context.dataStore.data.map { preferences ->
+            preferences[KEY_ASPECT_RATIO] ?: "16:9"
+        }
+    }
+
+    suspend fun setAspectRatio(context: Context, ratio: String) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_ASPECT_RATIO] = ratio
+        }
+    }
 
     fun getVideoQuality(context: Context): Flow<String> {
         return context.dataStore.data.map { preferences ->

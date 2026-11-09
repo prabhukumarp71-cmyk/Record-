@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RadioButtonChecked
@@ -72,6 +73,12 @@ data class ResolutionOption(
     val isRecommended: Boolean = false
 )
 
+data class AspectRatioOption(
+    val ratio: String,
+    val title: String,
+    val subtitle: String
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -81,6 +88,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
 
     val currentQuality by AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
+    val currentAspectRatio by AppSettings.getAspectRatio(context).collectAsState(initial = "16:9")
     val isAudioEnabled by AppSettings.isAudioEnabled(context).collectAsState(initial = true)
     val isDualFormatEnabled by AppSettings.isDualFormatEnabled(context).collectAsState(initial = true)
     val targetFps by AppSettings.getTargetFps(context).collectAsState(initial = 30)
@@ -233,6 +241,81 @@ fun SettingsScreen(
                                             )
                                         }
                                     }
+                                    Text(
+                                        text = option.subtitle,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Aspect Ratio Section
+            val aspectRatios = listOf(
+                AspectRatioOption("16:9", "16:9 Widescreen (Horizontal)", "Standard YouTube & Landscape Video (Default)"),
+                AspectRatioOption("9:16", "9:16 Vertical (Shorts / Reels)", "Optimized for TikTok, Instagram Reels, Shorts"),
+                AspectRatioOption("4:3", "4:3 Classic TV & Photo", "Traditional photography and classic framing"),
+                AspectRatioOption("1:1", "1:1 Square", "Square post format for social feeds")
+            )
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Crop,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Aspect Ratio",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        aspectRatios.forEach { option ->
+                            val isSelected = currentAspectRatio == option.ratio
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        scope.launch {
+                                            AppSettings.setAspectRatio(context, option.ratio)
+                                            RecordingManager.setAspectRatio(option.ratio)
+                                        }
+                                    }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        scope.launch {
+                                            AppSettings.setAspectRatio(context, option.ratio)
+                                            RecordingManager.setAspectRatio(option.ratio)
+                                        }
+                                    }
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = option.title,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                        fontSize = 15.sp
+                                    )
                                     Text(
                                         text = option.subtitle,
                                         fontSize = 12.sp,

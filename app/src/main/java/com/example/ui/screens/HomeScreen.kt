@@ -67,6 +67,7 @@ fun HomeScreen(
     val recordingDurationMs by RecordingManager.recordingDurationMs.collectAsState()
 
     val currentQuality by com.example.settings.AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
+    val currentAspectRatio by RecordingManager.selectedAspectRatio.collectAsState()
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
 
     val isRecording = recordingState == RecordingState.RECORDING
@@ -111,44 +112,94 @@ fun HomeScreen(
                     )
                 }
 
-                // Quick Resolution Switcher Chip (1-tap toggle between 4K UHD & 1080p FHD)
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = if (currentQuality == "ULTRA") Color(0xFFFF9100).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.65f),
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp,
-                        if (currentQuality == "ULTRA") Color(0xFFFF9100) else Color(0xFF00E5FF)
-                    ),
-                    modifier = Modifier
-                        .testTag("quick_resolution_toggle")
-                        .clickable(enabled = !isBusy) {
-                            coroutineScope.launch {
-                                val next = if (currentQuality == "ULTRA") "HIGH" else "ULTRA"
-                                com.example.settings.AppSettings.setVideoQuality(context, next)
-                                val label = if (next == "ULTRA") "4K UHD (3840×2160)" else "1080p FHD (1920×1080)"
-                                Toast.makeText(context, "🎬 Quality: $label", Toast.LENGTH_SHORT).show()
-                            }
-                        }
+                // Center Chips: Resolution Switcher + Aspect Ratio Switcher
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    // Quick Resolution Switcher Chip (1-tap toggle between 4K UHD & 1080p FHD)
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (currentQuality == "ULTRA") Color(0xFFFF9100).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.65f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (currentQuality == "ULTRA") Color(0xFFFF9100) else Color(0xFF00E5FF)
+                        ),
+                        modifier = Modifier
+                            .testTag("quick_resolution_toggle")
+                            .clickable(enabled = !isBusy) {
+                                coroutineScope.launch {
+                                    val next = if (currentQuality == "ULTRA") "HIGH" else "ULTRA"
+                                    com.example.settings.AppSettings.setVideoQuality(context, next)
+                                    val label = if (next == "ULTRA") "4K UHD (3840×2160)" else "1080p FHD (1920×1080)"
+                                    Toast.makeText(context, "🎬 Quality: $label", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .background(
-                                    if (currentQuality == "ULTRA") Color.White else Color(0xFF00E5FF),
-                                    CircleShape
-                                )
-                        )
-                        Text(
-                            text = if (currentQuality == "ULTRA") "4K UHD" else "1080p FHD",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            color = Color.White
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(
+                                        if (currentQuality == "ULTRA") Color.White else Color(0xFF00E5FF),
+                                        CircleShape
+                                    )
+                            )
+                            Text(
+                                text = if (currentQuality == "ULTRA") "4K UHD" else "1080p",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color.White
+                            )
+                        }
+                    }
+
+                    // Quick Aspect Ratio Switcher Chip (1-tap cycle between 16:9, 9:16, 4:3, 1:1)
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (currentAspectRatio != "16:9") Color(0xFF7C4DFF).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.65f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (currentAspectRatio != "16:9") Color(0xFFB388FF) else Color.White.copy(alpha = 0.35f)
+                        ),
+                        modifier = Modifier
+                            .testTag("quick_aspect_ratio_toggle")
+                            .clickable(enabled = !isBusy) {
+                                coroutineScope.launch {
+                                    val next = RecordingManager.cycleAspectRatio()
+                                    com.example.settings.AppSettings.setAspectRatio(context, next)
+                                    val label = when (next) {
+                                        "9:16" -> "9:16 Vertical (Shorts/Reels)"
+                                        "4:3" -> "4:3 Standard"
+                                        "1:1" -> "1:1 Square"
+                                        else -> "16:9 Widescreen"
+                                    }
+                                    Toast.makeText(context, "📐 Aspect Ratio: $label", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Crop,
+                                contentDescription = "Aspect Ratio",
+                                tint = if (currentAspectRatio != "16:9") Color.White else Color(0xFFB388FF),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = currentAspectRatio,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
 
@@ -256,6 +307,7 @@ fun HomeScreen(
                             .background(Color.Transparent, CircleShape)
                             .clickable {
                                 if (recordingState == RecordingState.STARTING || recordingState == RecordingState.STOPPING) {
+                                    RecordingManager.resetStateIfError()
                                     return@clickable
                                 }
                                 if (isRecording || isPaused) {

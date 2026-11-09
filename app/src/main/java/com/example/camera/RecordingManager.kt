@@ -117,13 +117,35 @@ object RecordingManager {
     private val _activeQualityDescription = MutableStateFlow("1080p FHD • 1920×1080")
     val activeQualityDescription: StateFlow<String> = _activeQualityDescription
 
+    private val _selectedAspectRatio = MutableStateFlow("16:9")
+    val selectedAspectRatio: StateFlow<String> = _selectedAspectRatio
+
+    fun setAspectRatio(ratio: String) {
+        _selectedAspectRatio.value = ratio
+    }
+
+    fun cycleAspectRatio(): String {
+        val next = when (_selectedAspectRatio.value) {
+            "16:9" -> "9:16"
+            "9:16" -> "4:3"
+            "4:3" -> "1:1"
+            else -> "16:9"
+        }
+        _selectedAspectRatio.value = next
+        return next
+    }
+
     val humanTracker = HumanAutofocusTracker()
 
     var previewUseCase: Preview? = null
         private set
 
     val isCameraReady: Boolean
-        get() = videoCapture != null
+        get() {
+            val cap = videoCapture ?: return false
+            val prov = cameraProvider ?: return false
+            return camera != null && prov.isBound(cap)
+        }
 
     var currentSurfaceProvider: Preview.SurfaceProvider? = null
         private set
@@ -763,6 +785,7 @@ object RecordingManager {
                     if (!recordEvent.hasError() && rawFile != null && rawFile.exists() && rawFile.length() > 0L) {
                         _recordingState.value = RecordingState.STOPPING
                         _isProcessingDualFormat.value = true
+                        val chosenRatio = _selectedAspectRatio.value
                         CoroutineScope(Dispatchers.IO).launch {
                             try {
                                 val result = DualFormatVideoHelper.processAndSaveRecording(
@@ -771,7 +794,8 @@ object RecordingManager {
                                     baseName = base,
                                     isDual = isDual,
                                     cropPosition = _cropPosition.value,
-                                    targetQuality = currentQuality
+                                    targetQuality = currentQuality,
+                                    aspectRatio = chosenRatio
                                 )
 
                                 withContext(Dispatchers.Main) {
@@ -779,10 +803,11 @@ object RecordingManager {
                                     _recordingState.value = RecordingState.IDLE
                                     _recordingDurationMs.value = 0L
                                     val qualityTag = if (currentQuality == Quality.UHD) "4K UHD" else "1080p FHD"
+                                    val ratioTag = if (chosenRatio != "16:9") " ($chosenRatio)" else ""
                                     val msg = if (result.companionUri != null) {
-                                        "✅ Saved in $qualityTag High Quality (Vertical & Horizontal)!"
+                                        "✅ Saved in $qualityTag$ratioTag High Quality (Vertical & Horizontal)!"
                                     } else {
-                                        "✅ Saved in $qualityTag High Quality!"
+                                        "✅ Saved in $qualityTag$ratioTag High Quality!"
                                     }
                                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                     onFinalizeCallback?.invoke(recordEvent)
@@ -847,19 +872,46 @@ object RecordingManager {
     }
 
     fun resetStateIfError() {
-        if (_recordingState.value == RecordingState.ERROR || _recordingState.value == RecordingState.STOPPING) {
+        if (_recordingState.value == RecordingState.ERROR || 
+            _recordingState.value == RecordingState.STOPPING || 
+            _recordingState.value == RecordingState.STARTING) {
             _recordingState.value = RecordingState.IDLE
+            _isProcessingDualFormat.value = false
+            _recordingDurationMs.value = 0L
+            activeRecording = null
         }
     }
 
     fun stopRecording(onFinalize: ((VideoRecordEvent.Finalize?) -> Unit)? = null) {
         onFinalizeCallback = onFinalize
-        if (activeRecording != null) {
+        val rec = activeRecording
+        if (rec != null) {
             _recordingState.value = RecordingState.STOPPING
-            activeRecording?.stop()
+            try {
+                rec.stop()
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception while stopping active recording", e)
+                _recordingState.value = RecordingState.IDLE
+                onFinalize?.invoke(null)
+                onFinalizeCallback = null
+            }
             activeRecording = null
+
+            // Safety watchdog timeout so the recording state is never permanently stuck in STOPPING
+            CoroutineScope(Dispatchers.Main).launch {
+                kotlinx.coroutines.delay(4500L)
+                if (_recordingState.value == RecordingState.STOPPING) {
+                    Log.w(TAG, "Safety watchdog: reset from STOPPING to IDLE")
+                    _isProcessingDualFormat.value = false
+                    _recordingState.value = RecordingState.IDLE
+                    _recordingDurationMs.value = 0L
+                    onFinalizeCallback?.invoke(null)
+                    onFinalizeCallback = null
+                }
+            }
         } else {
             _recordingState.value = RecordingState.IDLE
+            _isProcessingDualFormat.value = false
             onFinalize?.invoke(null)
             onFinalizeCallback = null
         }
@@ -880,5 +932,8 @@ object RecordingManager {
     fun unbind() {
         humanTracker.detachCamera()
         cameraProvider?.unbindAll()
+        camera = null
+        videoCapture = null
+        previewUseCase = null
     }
 }

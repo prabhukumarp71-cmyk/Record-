@@ -252,6 +252,6 @@ class RecordingService : LifecycleService() {
         super.onDestroy()
         releaseWakeLock()
         abandonCameraAudioFocus()
-        RecordingManager.unbind()
+        // Do NOT call RecordingManager.unbind() here; the camera session remains ready for subsequent recordings.
     }
 }
