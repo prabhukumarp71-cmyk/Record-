@@ -90,13 +90,13 @@ class RecordingService : LifecycleService() {
 
     private fun promoteToForeground() {
         val notification = createNotification("🔴 Background Video Recording Active")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             var serviceType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             val hasMic = androidx.core.content.ContextCompat.checkSelfPermission(
                 this,
                 android.Manifest.permission.RECORD_AUDIO
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (hasMic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (hasMic) {
                 serviceType = serviceType or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             }
             try {

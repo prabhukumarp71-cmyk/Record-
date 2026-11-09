@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
-import androidx.camera.view.PreviewView
+import android.graphics.SurfaceTexture
+import android.util.Log
+import android.view.TextureView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -62,7 +64,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.camera.RecordingManager
 import com.example.model.RecordingState
 import com.example.settings.AppSettings
@@ -73,7 +74,6 @@ fun DualFrameViewfinder(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
 
     val qualityName by AppSettings.getVideoQuality(context).collectAsState(initial = "HIGH")
     val cameraLensName by AppSettings.getCameraLens(context).collectAsState(initial = "BACK")
@@ -89,7 +89,6 @@ fun DualFrameViewfinder(
     val activeQualityDesc by RecordingManager.activeQualityDescription.collectAsState()
 
     var showExposureSlider by remember { mutableStateOf(false) }
-    var currentPreviewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
 
     val targetQuality = RecordingManager.parseQuality(qualityName)
     val lensFacing = if (cameraLensName == "FRONT") {
@@ -98,25 +97,14 @@ fun DualFrameViewfinder(
         androidx.camera.core.CameraSelector.LENS_FACING_BACK
     }
 
-    LaunchedEffect(qualityName, cameraLensName, lifecycleOwner, currentPreviewViewInstance, recordingState) {
-        val pv = currentPreviewViewInstance ?: return@LaunchedEffect
+    LaunchedEffect(qualityName, cameraLensName, lensFacing, targetQuality) {
         if (recordingState == RecordingState.IDLE) {
             RecordingManager.bindCamera(
                 context = context,
                 lifecycleOwner = RecordingManager.cameraLifecycleOwner,
                 lensFacing = lensFacing,
-                quality = targetQuality,
-                surfaceProvider = pv.surfaceProvider
+                quality = targetQuality
             )
-        } else {
-            // Camera is already bound; attach surface provider for live preview
-            RecordingManager.setUiSurfaceProvider(pv.surfaceProvider)
-        }
-    }
-
-    androidx.compose.runtime.DisposableEffect(Unit) {
-        onDispose {
-            RecordingManager.setUiSurfaceProvider(null)
         }
     }
 
@@ -125,7 +113,7 @@ fun DualFrameViewfinder(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // High-performance camera preview
+        // High-performance hardware TextureView with persistent SurfaceTexture
         AndroidView(
             modifier = Modifier
                 .fillMaxSize()
@@ -137,19 +125,36 @@ fun DualFrameViewfinder(
                     }
                 },
             factory = { ctx ->
-                PreviewView(ctx).apply {
-                    implementationMode = PreviewView.ImplementationMode.PERFORMANCE
-                    scaleType = PreviewView.ScaleType.FILL_CENTER
-                    currentPreviewViewInstance = this
-                    RecordingManager.setSurfaceProvider(this.surfaceProvider)
+                TextureView(ctx).apply {
+                    surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                        override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) {
+                            val saved = RecordingManager.persistentSurfaceTexture
+                            if (saved != null && saved != st) {
+                                try {
+                                    setSurfaceTexture(saved)
+                                    return
+                                } catch (e: Exception) {
+                                    Log.w("DualFrameViewfinder", "Could not reuse surface texture: ${e.message}")
+                                }
+                            }
+                            RecordingManager.provideTextureViewSurface(st, width, height)
+                        }
+
+                        override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, width: Int, height: Int) {
+                            st.setDefaultBufferSize(width, height)
+                        }
+
+                        override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+                            // CRITICAL: Return false so Android DOES NOT destroy the SurfaceTexture!
+                            // This ensures the camera video stream remains active when the app is minimized, locked, or closed!
+                            return false
+                        }
+
+                        override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+                    }
                 }
             },
-            update = { view ->
-                if (currentPreviewViewInstance != view) {
-                    currentPreviewViewInstance = view
-                }
-                RecordingManager.setSurfaceProvider(view.surfaceProvider)
-            }
+            update = { _ -> }
         )
 
         // Tap-to-meter focus indicator

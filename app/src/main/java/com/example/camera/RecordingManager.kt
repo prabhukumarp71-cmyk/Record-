@@ -161,24 +161,38 @@ object RecordingManager {
         }
     }
 
-    private var safeSurfaceProvider: BackgroundSafeSurfaceProvider? = null
+    var persistentSurfaceTexture: android.graphics.SurfaceTexture? = null
+        private set
+    var persistentSurface: android.view.Surface? = null
+        private set
+    private var pendingSurfaceRequest: androidx.camera.core.SurfaceRequest? = null
 
-    fun setUiSurfaceProvider(provider: Preview.SurfaceProvider?) {
-        val wasHeadless = safeSurfaceProvider?.isHeadless() ?: (currentSurfaceProvider == null)
-        currentSurfaceProvider = provider
-        safeSurfaceProvider?.setUiProvider(provider)
-        val isNowHeadless = (provider == null)
-
-        if (wasHeadless != isNowHeadless) {
-            previewUseCase?.let { preview ->
+    fun provideTextureViewSurface(st: android.graphics.SurfaceTexture, width: Int, height: Int) {
+        if (persistentSurfaceTexture != st) {
+            persistentSurfaceTexture = st
+            st.setDefaultBufferSize(width, height)
+            persistentSurface = android.view.Surface(st)
+        }
+        val surf = persistentSurface
+        if (surf != null && surf.isValid) {
+            pendingSurfaceRequest?.let { req ->
                 try {
-                    preview.setSurfaceProvider(null)
-                    preview.setSurfaceProvider(safeSurfaceProvider)
+                    req.provideSurface(surf, ContextCompat.getMainExecutor(currentContext ?: return)) { res ->
+                        Log.d(TAG, "Provided surface completed: ${res.resultCode}")
+                    }
+                    pendingSurfaceRequest = null
                 } catch (e: Exception) {
-                    Log.w(TAG, "Error switching preview surface provider: ${e.message}")
+                    Log.w(TAG, "Error providing surface to pending request: ${e.message}")
                 }
             }
         }
+    }
+
+    private var safeSurfaceProvider: BackgroundSafeSurfaceProvider? = null
+
+    fun setUiSurfaceProvider(provider: Preview.SurfaceProvider?) {
+        currentSurfaceProvider = provider
+        safeSurfaceProvider?.setUiProvider(provider)
     }
 
     fun setSurfaceProvider(provider: Preview.SurfaceProvider?) {
@@ -230,91 +244,63 @@ object RecordingManager {
                 } ?: if (lensFacing == CameraSelector.LENS_FACING_FRONT) 1 else 0
 
                 val supportedQualities = mutableListOf<Quality>()
-                try {
-                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_2160P)) {
-                        supportedQualities.add(Quality.UHD)
+                if (cameraInfo != null) {
+                    try {
+                        val videoCaps = Recorder.getVideoCapabilities(cameraInfo)
+                        val caps = videoCaps.getSupportedQualities(DynamicRange.SDR)
+                        supportedQualities.addAll(caps)
+                        Log.d(TAG, "Supported qualities from VideoCapabilities: $caps")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error checking VideoCapabilities: ${e.message}")
                     }
-                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_1080P)) {
-                        supportedQualities.add(Quality.FHD)
-                    }
-                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_720P)) {
-                        supportedQualities.add(Quality.HD)
-                    }
-                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_480P)) {
-                        supportedQualities.add(Quality.SD)
-                    }
-                    if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_LOW)) {
-                        supportedQualities.add(Quality.LOWEST)
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error checking CamcorderProfile: ${e.message}")
                 }
 
                 if (supportedQualities.isEmpty()) {
-                    try {
-                        if (CamcorderProfile.hasProfile(camIdInt, CamcorderProfile.QUALITY_HIGH)) {
-                            supportedQualities.add(Quality.HIGHEST)
-                        }
-                    } catch (e: Exception) {
-                        // ignore
-                    }
+                    supportedQualities.addAll(listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD))
                 }
-
-                Log.d(TAG, "Supported video qualities via CamcorderProfile: $supportedQualities, requested: $quality")
 
                 val preferredQualities = mutableListOf<Quality>()
                 if (quality in supportedQualities) {
                     preferredQualities.add(quality)
                 }
-                supportedQualities.forEach { q ->
-                    if (!preferredQualities.contains(q)) {
+                listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD).forEach { q ->
+                    if (q in supportedQualities && !preferredQualities.contains(q)) {
                         preferredQualities.add(q)
                     }
                 }
-
-                val qualitySelector = if (preferredQualities.isNotEmpty()) {
-                    QualitySelector.fromOrderedList(
-                        preferredQualities,
-                        FallbackStrategy.lowerQualityOrHigherThan(preferredQualities.last())
-                    )
-                } else {
-                    QualitySelector.from(
-                        Quality.LOWEST,
-                        FallbackStrategy.higherQualityOrLowerThan(Quality.LOWEST)
-                    )
+                if (preferredQualities.isEmpty()) {
+                    preferredQualities.addAll(listOf(Quality.FHD, Quality.HD, Quality.SD))
                 }
 
-                val resolvedQuality = when {
-                    preferredQualities.contains(quality) -> quality
-                    preferredQualities.isNotEmpty() -> preferredQualities.first()
-                    else -> Quality.LOWEST
-                }
+                val qualitySelector = QualitySelector.fromOrderedList(
+                    preferredQualities,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                )
+
+                val resolvedQuality = preferredQualities.firstOrNull() ?: Quality.FHD
 
                 _activeQualityDescription.value = when (resolvedQuality) {
-                    Quality.UHD -> "4K UHD • 3840×2160 (High Profile)"
-                    Quality.FHD -> "1080p FHD • 1920×1080 (High Profile)"
-                    Quality.HD -> "720p HD • 1280×720 (High Profile)"
+                    Quality.UHD -> "4K UHD • 3840×2160 (High Quality)"
+                    Quality.FHD -> "1080p FHD • 1920×1080 (High Quality)"
+                    Quality.HD -> "720p HD • 1280×720 (High Quality)"
                     Quality.SD -> "480p SD • 720×480"
-                    Quality.LOWEST -> "Standard SD"
-                    Quality.HIGHEST -> "High Quality"
-                    else -> "HD Standard"
+                    Quality.HIGHEST -> "4K UHD (High Quality)"
+                    else -> "1080p FHD (High Quality)"
                 }
 
                 val recorderBuilder = Recorder.Builder()
                     .setQualitySelector(qualitySelector)
 
-                if (resolvedQuality == Quality.UHD || resolvedQuality == Quality.FHD) {
-                    val fps = _targetFps.value
-                    val targetBitRate = if (resolvedQuality == Quality.UHD) {
-                        if (fps >= 60) 40_000_000 else 30_000_000
-                    } else {
-                        if (fps >= 60) 24_000_000 else 18_000_000
-                    }
-                    try {
-                        recorderBuilder.setTargetVideoEncodingBitRate(targetBitRate)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Cannot set target bitrate: ${e.message}")
-                    }
+                val targetBitRate = when (resolvedQuality) {
+                    Quality.UHD -> 36_000_000
+                    Quality.FHD -> 20_000_000
+                    Quality.HD -> 12_000_000
+                    else -> 8_000_000
+                }
+                try {
+                    recorderBuilder.setTargetVideoEncodingBitRate(targetBitRate)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cannot set target bitrate: ${e.message}")
                 }
 
                 val recorder = recorderBuilder.build()
@@ -322,7 +308,7 @@ object RecordingManager {
 
                 val camera2Extender = Camera2Interop.Extender(videoCaptureBuilder)
 
-                // Master quality & sharpness enhancements directly on camera pipeline
+                // Master quality & continuous sharp auto-focus
                 camera2Extender.setCaptureRequestOption(
                     CaptureRequest.CONTROL_MODE,
                     CaptureRequest.CONTROL_MODE_AUTO
@@ -335,41 +321,6 @@ object RecordingManager {
                     CaptureRequest.CONTROL_AWB_MODE,
                     CaptureRequest.CONTROL_AWB_MODE_AUTO
                 )
-                if (!_isFarFocusOnly.value) {
-                    camera2Extender.setCaptureRequestOption(
-                        CaptureRequest.CONTROL_AF_MODE,
-                        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
-                    )
-                }
-                camera2Extender.setCaptureRequestOption(
-                    CaptureRequest.EDGE_MODE,
-                    CaptureRequest.EDGE_MODE_HIGH_QUALITY
-                )
-                camera2Extender.setCaptureRequestOption(
-                    CaptureRequest.NOISE_REDUCTION_MODE,
-                    CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY
-                )
-                camera2Extender.setCaptureRequestOption(
-                    CaptureRequest.TONEMAP_MODE,
-                    CaptureRequest.TONEMAP_MODE_HIGH_QUALITY
-                )
-                camera2Extender.setCaptureRequestOption(
-                    CaptureRequest.COLOR_CORRECTION_MODE,
-                    CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY
-                )
-                camera2Extender.setCaptureRequestOption(
-                    CaptureRequest.HOT_PIXEL_MODE,
-                    CaptureRequest.HOT_PIXEL_MODE_HIGH_QUALITY
-                )
-                camera2Extender.setCaptureRequestOption(
-                    CaptureRequest.SHADING_MODE,
-                    CaptureRequest.SHADING_MODE_HIGH_QUALITY
-                )
-                camera2Extender.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
-                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
-                )
-
                 if (_isFarFocusOnly.value) {
                     camera2Extender.setCaptureRequestOption(
                         CaptureRequest.CONTROL_AF_MODE,
@@ -379,7 +330,16 @@ object RecordingManager {
                         CaptureRequest.LENS_FOCUS_DISTANCE,
                         0.0f
                     )
+                } else {
+                    camera2Extender.setCaptureRequestOption(
+                        CaptureRequest.CONTROL_AF_MODE,
+                        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+                    )
                 }
+                camera2Extender.setCaptureRequestOption(
+                    CaptureRequest.EDGE_MODE,
+                    CaptureRequest.EDGE_MODE_HIGH_QUALITY
+                )
 
                 if (_nightModeEnabled.value) {
                     camera2Extender.setCaptureRequestOption(
@@ -420,20 +380,24 @@ object RecordingManager {
                 previewUseCase = Preview.Builder()
                     .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
                     .build()
-                previewUseCase?.setSurfaceProvider(safeProvider)
-                previewUseCase?.let { useCases.add(it) }
 
-                var imageAnalysis: ImageAnalysis? = null
-                if (quality != Quality.UHD && humanTracker.humanAfEnabled.value) {
-                    val isFront = lensFacing == CameraSelector.LENS_FACING_FRONT
-                    imageAnalysis = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
-                        .setTargetResolution(Size(640, 480))
-                        .build()
-                    imageAnalysis.setAnalyzer(humanTracker.executor, humanTracker.createAnalyzer(isFront))
-                    useCases.add(imageAnalysis)
+                previewUseCase?.setSurfaceProvider { request ->
+                    val surf = persistentSurface
+                    if (surf != null && surf.isValid) {
+                        try {
+                            request.provideSurface(surf, ContextCompat.getMainExecutor(context)) { result ->
+                                Log.d(TAG, "Persistent preview surface result: ${result.resultCode}")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Fallback to safeProvider on surface exception: ${e.message}")
+                            safeProvider.onSurfaceRequested(request)
+                        }
+                    } else {
+                        pendingSurfaceRequest = request
+                        safeProvider.onSurfaceRequested(request)
+                    }
                 }
+                previewUseCase?.let { useCases.add(it) }
 
                 try {
                     camera = cameraProvider?.bindToLifecycle(
@@ -441,26 +405,13 @@ object RecordingManager {
                         cameraSelector,
                         *useCases.toTypedArray()
                     )
-                    humanTracker.attachCamera(camera, imageAnalysis)
+                    humanTracker.attachCamera(camera, null)
                     if (_recordingState.value == RecordingState.ERROR) {
                         _recordingState.value = RecordingState.IDLE
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Binding with all use cases failed: ${e.message}, attempting fallback without ImageAnalysis...")
-                    imageAnalysis?.let { useCases.remove(it) }
+                    Log.w(TAG, "Binding with videoCapture failed: ${e.message}, attempting lowest quality fallback...")
                     try {
-                        camera = cameraProvider?.bindToLifecycle(
-                            cameraLifecycleOwner,
-                            cameraSelector,
-                            *useCases.toTypedArray()
-                        )
-                        humanTracker.attachCamera(camera, null)
-                        if (_recordingState.value == RecordingState.ERROR) {
-                            _recordingState.value = RecordingState.IDLE
-                        }
-                    } catch (e2: Exception) {
-                        Log.w(TAG, "Binding with videoCapture failed: ${e2.message}, attempting lowest quality fallback...")
-                        try {
                             videoCapture?.let { useCases.remove(it) }
                             val fallbackRecorder = Recorder.Builder()
                                 .setQualitySelector(
@@ -483,25 +434,24 @@ object RecordingManager {
                                 _recordingState.value = RecordingState.IDLE
                             }
                             Log.i(TAG, "Successfully bound camera with lowest quality VideoCapture")
-                        } catch (e3: Exception) {
-                            Log.e(TAG, "VideoCapture not supported on this device/emulator: ${e3.message}. Falling back to preview-only mode.")
-                            videoCapture?.let { useCases.remove(it) }
-                            videoCapture = null
-                            try {
-                                camera = cameraProvider?.bindToLifecycle(
-                                    cameraLifecycleOwner,
-                                    cameraSelector,
-                                    *useCases.toTypedArray()
-                                )
-                                humanTracker.attachCamera(camera, null)
-                                if (_recordingState.value == RecordingState.ERROR) {
-                                    _recordingState.value = RecordingState.IDLE
-                                }
-                                Log.i(TAG, "Successfully bound preview-only mode")
-                            } catch (e4: Exception) {
-                                Log.e(TAG, "Fatal: unable to bind camera preview", e4)
-                                _recordingState.value = RecordingState.ERROR
+                    } catch (e3: Exception) {
+                        Log.e(TAG, "VideoCapture not supported on this device/emulator: ${e3.message}. Falling back to preview-only mode.")
+                        videoCapture?.let { useCases.remove(it) }
+                        videoCapture = null
+                        try {
+                            camera = cameraProvider?.bindToLifecycle(
+                                cameraLifecycleOwner,
+                                cameraSelector,
+                                *useCases.toTypedArray()
+                            )
+                            humanTracker.attachCamera(camera, null)
+                            if (_recordingState.value == RecordingState.ERROR) {
+                                _recordingState.value = RecordingState.IDLE
                             }
+                            Log.i(TAG, "Successfully bound preview-only mode")
+                        } catch (e4: Exception) {
+                            Log.e(TAG, "Fatal: unable to bind camera preview", e4)
+                            _recordingState.value = RecordingState.ERROR
                         }
                     }
                 }
