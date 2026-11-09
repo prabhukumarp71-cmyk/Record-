@@ -33,4 +33,14 @@ class ExampleUnitTest {
     assertEquals("1:1", VideoFormatType.SQUARE.ratio)
     assertEquals("4:3", VideoFormatType.RATIO_4_3.ratio)
   }
+
+  @Test
+  fun testFarFocusPresets() {
+    val presets = com.example.camera.FarFocusPreset.values()
+    assertTrue(presets.isNotEmpty())
+    val near15 = presets.first { it == com.example.camera.FarFocusPreset.NEAR_15CM }
+    assertEquals(0.15f, near15.distanceMeters ?: 0f, 0.001f)
+    val auto = presets.first { it == com.example.camera.FarFocusPreset.AUTO_FAR }
+    assertNull(auto.distanceMeters)
+  }
 }

@@ -48,6 +48,14 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 
+enum class FarFocusPreset(val label: String, val badge: String, val distanceMeters: Float?, val description: String) {
+    AUTO_FAR(">15cm Auto AF", ">15cm SHARP AF", null, "Continuous Sharp Auto-Focus for all objects > 15cm"),
+    NEAR_15CM("15 cm Focus", "15cm LOCKED", 0.15f, "Manual optical focus locked at 15cm (near boundary)"),
+    MID_50CM("50 cm Focus", "50cm LOCKED", 0.50f, "Manual optical focus locked at 50cm (desk/arm length)"),
+    ROOM_1M("1 m Focus", "1m LOCKED", 1.0f, "Manual optical focus locked at 1m (indoor scene)"),
+    FAR_INF("Far / Inf", "FAR LOCKED", 3.0f, "Manual optical focus locked at 3m to infinity")
+}
+
 object RecordingManager {
     private const val TAG = "RecordingManager"
 
@@ -71,6 +79,23 @@ object RecordingManager {
 
     private val _isFarFocusOnly = MutableStateFlow(false)
     val isFarFocusOnly: StateFlow<Boolean> = _isFarFocusOnly
+
+    private val _farFocusPreset = MutableStateFlow(FarFocusPreset.AUTO_FAR)
+    val farFocusPreset: StateFlow<FarFocusPreset> = _farFocusPreset
+
+    fun setFarFocusPreset(preset: FarFocusPreset) {
+        _farFocusPreset.value = preset
+        setFarFocusOnly(true, preset.distanceMeters)
+    }
+
+    fun cycleFarFocusPreset(): FarFocusPreset {
+        val presets = FarFocusPreset.values()
+        val nextIdx = (presets.indexOf(_farFocusPreset.value) + 1) % presets.size
+        val next = presets[nextIdx]
+        _farFocusPreset.value = next
+        setFarFocusOnly(true, next.distanceMeters)
+        return next
+    }
 
     private val _isAeLocked = MutableStateFlow(false)
     val isAeLocked: StateFlow<Boolean> = _isAeLocked
@@ -343,30 +368,16 @@ object RecordingManager {
                     CaptureRequest.CONTROL_AWB_MODE,
                     CaptureRequest.CONTROL_AWB_MODE_AUTO
                 )
-                if (_isFarFocusOnly.value) {
-                    val camera2Info = cameraInfo?.let {
-                        try { Camera2CameraInfo.from(it) } catch (_: Exception) { null }
-                    }
-                    val afModes = camera2Info?.getCameraCharacteristic(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
-                    val minFocusDistance = camera2Info?.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0.0f
-                    val hyperfocal = camera2Info?.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE)
-
-                    if (minFocusDistance > 0.0f && afModes.contains(CaptureRequest.CONTROL_AF_MODE_OFF)) {
-                        val targetDist = if (hyperfocal != null && hyperfocal > 0.0f) hyperfocal else 0.0f
-                        camera2Extender.setCaptureRequestOption(
-                            CaptureRequest.CONTROL_AF_MODE,
-                            CaptureRequest.CONTROL_AF_MODE_OFF
-                        )
-                        camera2Extender.setCaptureRequestOption(
-                            CaptureRequest.LENS_FOCUS_DISTANCE,
-                            targetDist
-                        )
-                    } else {
-                        camera2Extender.setCaptureRequestOption(
-                            CaptureRequest.CONTROL_AF_MODE,
-                            CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
-                        )
-                    }
+                val manualDist = if (_isFarFocusOnly.value) _farFocusPreset.value.distanceMeters else null
+                if (manualDist != null && manualDist > 0f) {
+                    camera2Extender.setCaptureRequestOption(
+                        CaptureRequest.CONTROL_AF_MODE,
+                        CaptureRequest.CONTROL_AF_MODE_OFF
+                    )
+                    camera2Extender.setCaptureRequestOption(
+                        CaptureRequest.LENS_FOCUS_DISTANCE,
+                        (1.0f / manualDist).coerceAtLeast(0.05f)
+                    )
                 } else {
                     camera2Extender.setCaptureRequestOption(
                         CaptureRequest.CONTROL_AF_MODE,
@@ -520,9 +531,10 @@ object RecordingManager {
     }
 
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
-    fun setFarFocusOnly(enabled: Boolean) {
+    fun setFarFocusOnly(enabled: Boolean, manualDistanceMeters: Float? = null) {
         _isFarFocusOnly.value = enabled
         _isFocusLocked.value = enabled
+        humanTracker.setFarFocusOnly(enabled)
         val currentCam = camera ?: return
         val cameraControl = currentCam.cameraControl
         val camera2Control = Camera2CameraControl.from(cameraControl)
@@ -532,49 +544,49 @@ object RecordingManager {
             null
         }
 
+        val afModes = camera2Info?.getCameraCharacteristic(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
+        val minFocusDistance = camera2Info?.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0.0f
+
+        val builder = CaptureRequestOptions.Builder()
+        builder.setCaptureRequestOption(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
+
         if (enabled) {
             cameraControl.cancelFocusAndMetering()
-            val afModes = camera2Info?.getCameraCharacteristic(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
-            val minFocusDistance = camera2Info?.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0.0f
-            val hyperfocalDistance = camera2Info?.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE)
-
-            val builder = CaptureRequestOptions.Builder()
-
-            if (minFocusDistance == 0.0f) {
-                // Fixed-focus camera lens (e.g. many front cameras or ultra-wide lenses)
-                // Manual focus distance is not supported; keeping auto mode is optimal
-                if (afModes.contains(CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) {
-                    builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                } else {
-                    builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
-                }
-                Log.d(TAG, "Far Focus: Fixed-focus lens detected (minFocusDistance=0)")
-            } else if (afModes.contains(CaptureRequest.CONTROL_AF_MODE_OFF)) {
-                // Manual focus is supported: use hyperfocal distance if calibrated, or 0.0f (infinity)
-                // If hyperfocal distance is available and > 0, everything from (1 / hyperfocal) to infinity is in sharp focus!
-                val targetFocusDistance = if (hyperfocalDistance != null && hyperfocalDistance > 0.0f) {
-                    hyperfocalDistance
-                } else {
-                    0.0f
-                }
+            if (manualDistanceMeters != null && manualDistanceMeters > 0f && afModes.contains(CaptureRequest.CONTROL_AF_MODE_OFF) && minFocusDistance > 0f) {
+                // Manual distance lock (e.g. 0.15m = 15cm -> 6.67 diopters)
+                val targetDiopter = (1.0f / manualDistanceMeters).coerceIn(0.05f, minFocusDistance)
                 builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-                builder.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, targetFocusDistance)
-                Log.d(TAG, "Far Focus Locked with AF_MODE_OFF at focus distance: $targetFocusDistance (minFocus: $minFocusDistance, hyperfocal: $hyperfocalDistance)")
+                builder.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, targetDiopter)
+                Log.d(TAG, "Far Focus: Set manual focus distance to $manualDistanceMeters m ($targetDiopter diopters)")
             } else {
-                // If AF_MODE_OFF is not supported by driver, use continuous video or auto AF locked
-                val fallbackAf = if (afModes.contains(CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) {
+                // Active Continuous AF for >15cm: ensure CONTINUOUS_VIDEO AF is active so all subjects > 15cm are sharp
+                val afMode = if (afModes.contains(CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) {
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
-                } else {
+                } else if (afModes.contains(CaptureRequest.CONTROL_AF_MODE_AUTO)) {
                     CaptureRequest.CONTROL_AF_MODE_AUTO
+                } else {
+                    CaptureRequest.CONTROL_AF_MODE_OFF
                 }
-                builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, fallbackAf)
-                Log.d(TAG, "Far Focus: AF_MODE_OFF not in available modes, using AF mode: $fallbackAf")
+                builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
+                Log.d(TAG, "Far Focus: Enabled Active Continuous AF mode ($afMode) for distance > 15cm")
             }
 
             camera2Control.setCaptureRequestOptions(builder.build())
+
+            // Immediately trigger fast center-weighted autofocus to snap to sharp focus for subjects > 15cm
+            val factory = SurfaceOrientedMeteringPointFactory(1f, 1f)
+            val center = factory.createPoint(0.5f, 0.5f)
+            val action = FocusMeteringAction.Builder(center, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+                .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            try {
+                cameraControl.startFocusAndMetering(action)
+            } catch (e: Exception) {
+                Log.w(TAG, "Far focus trigger error: ${e.message}")
+            }
         } else {
             cameraControl.cancelFocusAndMetering()
-            val afModes = camera2Info?.getCameraCharacteristic(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
+            humanTracker.clearSelectedPerson()
             val restoreAfMode = if (afModes.contains(CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) {
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
             } else if (afModes.contains(CaptureRequest.CONTROL_AF_MODE_AUTO)) {
@@ -582,11 +594,8 @@ object RecordingManager {
             } else {
                 CaptureRequest.CONTROL_AF_MODE_OFF
             }
-
-            val captureOptions = CaptureRequestOptions.Builder()
-                .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, restoreAfMode)
-                .build()
-            camera2Control.setCaptureRequestOptions(captureOptions)
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, restoreAfMode)
+            camera2Control.setCaptureRequestOptions(builder.build())
             Log.d(TAG, "Restored Continuous Video Auto-Focus mode: $restoreAfMode")
         }
     }
@@ -613,7 +622,12 @@ object RecordingManager {
     }
 
     fun toggleFarFocusOnly() {
-        setFarFocusOnly(!_isFarFocusOnly.value)
+        val next = !_isFarFocusOnly.value
+        if (next) {
+            setFarFocusOnly(true, _farFocusPreset.value.distanceMeters)
+        } else {
+            setFarFocusOnly(false, null)
+        }
     }
 
     fun toggleFocusLock() {
@@ -637,35 +651,22 @@ object RecordingManager {
     }
 
     fun focusAtPoint(x: Float, y: Float) {
-        if (_isFarFocusOnly.value) {
-            _tapMeterPoint.value = Pair(x, y)
-            val currentCam = camera ?: return
-            val factory = SurfaceOrientedMeteringPointFactory(1f, 1f)
-            val point = factory.createPoint(x.coerceIn(0f, 1f), y.coerceIn(0f, 1f))
-            val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AE)
-                .disableAutoCancel()
-                .build()
-            try {
-                currentCam.cameraControl.startFocusAndMetering(action)
-            } catch (e: Exception) {
-                Log.w(TAG, "Error metering AE: ${e.message}")
-            }
-            applyCameraSettings()
-            return
-        }
-
+        _tapMeterPoint.value = Pair(x, y)
         val currentCam = camera ?: return
-        val hitPerson = humanTracker.selectPersonAt(x, y)
-        if (hitPerson) {
-            _isFocusLocked.value = false
-            return
+
+        if (!_isFarFocusOnly.value) {
+            val hitPerson = humanTracker.selectPersonAt(x, y)
+            if (hitPerson) {
+                _isFocusLocked.value = false
+                return
+            }
         }
 
         humanTracker.clearSelectedPerson()
         val factory = SurfaceOrientedMeteringPointFactory(1f, 1f)
         val point = factory.createPoint(x.coerceIn(0f, 1f), y.coerceIn(0f, 1f))
         val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
-            .disableAutoCancel()
+            .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS)
             .build()
         try {
             currentCam.cameraControl.startFocusAndMetering(action)
@@ -673,6 +674,7 @@ object RecordingManager {
             Log.w(TAG, "Error startFocusAndMetering: ${e.message}")
         }
         _isFocusLocked.value = true
+        applyCameraSettings()
     }
 
     fun toggleNightMode() {

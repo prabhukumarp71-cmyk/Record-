@@ -87,6 +87,7 @@ fun DualFrameViewfinder(
     val isTorchOn by RecordingManager.isTorchOn.collectAsState()
     val zoomRatio by RecordingManager.zoomRatio.collectAsState()
     val isFarFocusOnly by RecordingManager.isFarFocusOnly.collectAsState()
+    val farFocusPreset by RecordingManager.farFocusPreset.collectAsState()
     val selectedAspectRatio by RecordingManager.selectedAspectRatio.collectAsState()
     val exposureIndex by RecordingManager.exposureIndex.collectAsState()
     val exposureEvValue by RecordingManager.exposureEvValue.collectAsState()
@@ -262,7 +263,7 @@ fun DualFrameViewfinder(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Far Focus Lock Status Pill (Tap to toggle)
+            // Far Focus Lock Status Pill (Tap to toggle / cycle preset)
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = if (isFarFocusOnly) Color(0xFF00E5FF).copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.6f),
@@ -270,7 +271,13 @@ fun DualFrameViewfinder(
                 modifier = Modifier
                     .testTag("far_focus_status_pill")
                     .clickable {
-                        RecordingManager.toggleFarFocusOnly()
+                        if (!isFarFocusOnly) {
+                            RecordingManager.toggleFarFocusOnly()
+                            android.widget.Toast.makeText(context, "🎯 Far Focus Active: Sharp Focus for >15cm", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            val next = RecordingManager.cycleFarFocusPreset()
+                            android.widget.Toast.makeText(context, "🎯 ${next.label}: ${next.description}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     }
             ) {
                 Row(
@@ -285,7 +292,7 @@ fun DualFrameViewfinder(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = if (isFarFocusOnly) "FAR OBJECTS ONLY (FOCUS LOCKED)" else "FOCUS: AUTO",
+                        text = if (isFarFocusOnly) "FAR MODE: ${farFocusPreset.badge}" else "FOCUS: AUTO (>15cm)",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (isFarFocusOnly) Color.Black else Color.White
@@ -513,13 +520,18 @@ fun DualFrameViewfinder(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Dedicated Far Focus Lock Button
+            // Dedicated Far Focus Lock Button (>15cm)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 IconButton(
-                    onClick = { RecordingManager.toggleFarFocusOnly() },
+                    onClick = {
+                        val willEnable = !isFarFocusOnly
+                        RecordingManager.toggleFarFocusOnly()
+                        val msg = if (willEnable) "🎯 Far Focus Active (>15cm Sharp AF)" else "Focus: Standard Auto"
+                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier
                         .testTag("far_focus_lock_button")
                         .size(46.dp)
@@ -535,13 +547,13 @@ fun DualFrameViewfinder(
                 ) {
                     Icon(
                         imageVector = if (isFarFocusOnly) Icons.Default.Lock else Icons.Default.Landscape,
-                        contentDescription = "Far Focus Lock",
+                        contentDescription = "Far Focus Lock (>15cm)",
                         tint = if (isFarFocusOnly) Color.Black else Color.White,
                         modifier = Modifier.size(24.dp)
                     )
                 }
                 Text(
-                    text = if (isFarFocusOnly) "LOCKED" else "FAR AF",
+                    text = if (isFarFocusOnly) ">15cm" else "FAR AF",
                     fontSize = 9.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = if (isFarFocusOnly) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.8f)
