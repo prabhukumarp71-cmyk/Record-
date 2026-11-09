@@ -151,20 +151,34 @@ object RecordingManager {
         }
     }
 
+    val cameraLifecycleOwner = CameraLifecycleOwner()
+
     fun setVideoQuality(quality: Quality) {
         currentQuality = quality
         val ctx = currentContext
-        val lifecycleOwner = currentLifecycleOwner
-        if (ctx != null && lifecycleOwner != null && _recordingState.value == RecordingState.IDLE) {
-            bindCamera(ctx, lifecycleOwner, currentLensFacing, quality)
+        if (ctx != null && _recordingState.value == RecordingState.IDLE) {
+            bindCamera(ctx, cameraLifecycleOwner, currentLensFacing, quality)
         }
     }
 
     private var safeSurfaceProvider: BackgroundSafeSurfaceProvider? = null
 
     fun setUiSurfaceProvider(provider: Preview.SurfaceProvider?) {
+        val wasHeadless = safeSurfaceProvider?.isHeadless() ?: (currentSurfaceProvider == null)
         currentSurfaceProvider = provider
         safeSurfaceProvider?.setUiProvider(provider)
+        val isNowHeadless = (provider == null)
+
+        if (wasHeadless != isNowHeadless) {
+            previewUseCase?.let { preview ->
+                try {
+                    preview.setSurfaceProvider(null)
+                    preview.setSurfaceProvider(safeSurfaceProvider)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error switching preview surface provider: ${e.message}")
+                }
+            }
+        }
     }
 
     fun setSurfaceProvider(provider: Preview.SurfaceProvider?) {
@@ -175,14 +189,15 @@ object RecordingManager {
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     fun bindCamera(
         context: Context,
-        lifecycleOwner: LifecycleOwner,
+        lifecycleOwner: LifecycleOwner = cameraLifecycleOwner,
         lensFacing: Int = currentLensFacing,
         quality: Quality = currentQuality,
         surfaceProvider: Preview.SurfaceProvider? = currentSurfaceProvider,
         onBound: (() -> Unit)? = null
     ) {
         currentContext = context.applicationContext
-        currentLifecycleOwner = lifecycleOwner
+        currentLifecycleOwner = cameraLifecycleOwner
+        cameraLifecycleOwner.start()
         currentLensFacing = lensFacing
         _lensFacing.value = lensFacing
         currentQuality = quality
@@ -422,7 +437,7 @@ object RecordingManager {
 
                 try {
                     camera = cameraProvider?.bindToLifecycle(
-                        lifecycleOwner,
+                        cameraLifecycleOwner,
                         cameraSelector,
                         *useCases.toTypedArray()
                     )
@@ -435,7 +450,7 @@ object RecordingManager {
                     imageAnalysis?.let { useCases.remove(it) }
                     try {
                         camera = cameraProvider?.bindToLifecycle(
-                            lifecycleOwner,
+                            cameraLifecycleOwner,
                             cameraSelector,
                             *useCases.toTypedArray()
                         )
@@ -459,7 +474,7 @@ object RecordingManager {
                             useCases.add(fallbackVideoCapture)
 
                             camera = cameraProvider?.bindToLifecycle(
-                                lifecycleOwner,
+                                cameraLifecycleOwner,
                                 cameraSelector,
                                 *useCases.toTypedArray()
                             )
@@ -474,7 +489,7 @@ object RecordingManager {
                             videoCapture = null
                             try {
                                 camera = cameraProvider?.bindToLifecycle(
-                                    lifecycleOwner,
+                                    cameraLifecycleOwner,
                                     cameraSelector,
                                     *useCases.toTypedArray()
                                 )
@@ -632,9 +647,8 @@ object RecordingManager {
             _exposureMode.value = 0
         }
         val ctx = currentContext
-        val lifecycleOwner = currentLifecycleOwner
-        if (ctx != null && lifecycleOwner != null && _recordingState.value == RecordingState.IDLE) {
-            bindCamera(ctx, lifecycleOwner, currentLensFacing, currentQuality)
+        if (ctx != null && _recordingState.value == RecordingState.IDLE) {
+            bindCamera(ctx, cameraLifecycleOwner, currentLensFacing, currentQuality)
         } else {
             applyCameraSettings()
         }
@@ -651,9 +665,7 @@ object RecordingManager {
         _lensFacing.value = currentLensFacing
 
         currentContext?.let { ctx ->
-            currentLifecycleOwner?.let { owner ->
-                bindCamera(ctx, owner, currentLensFacing, currentQuality)
-            }
+            bindCamera(ctx, cameraLifecycleOwner, currentLensFacing, currentQuality)
         }
     }
 

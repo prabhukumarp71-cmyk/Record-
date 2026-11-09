@@ -103,13 +103,13 @@ fun DualFrameViewfinder(
         if (recordingState == RecordingState.IDLE) {
             RecordingManager.bindCamera(
                 context = context,
-                lifecycleOwner = lifecycleOwner,
+                lifecycleOwner = RecordingManager.cameraLifecycleOwner,
                 lensFacing = lensFacing,
                 quality = targetQuality,
                 surfaceProvider = pv.surfaceProvider
             )
         } else {
-            // Camera is already bound to RecordingService in background; attach surface provider for live preview
+            // Camera is already bound; attach surface provider for live preview
             RecordingManager.setUiSurfaceProvider(pv.surfaceProvider)
         }
     }

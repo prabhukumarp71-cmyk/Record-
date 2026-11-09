@@ -168,16 +168,20 @@ class RecordingService : LifecycleService() {
                     androidx.camera.core.CameraSelector.LENS_FACING_BACK
                 }
 
-                // Crucial: Bind camera directly to this LifecycleService instance so recording
-                // continues uninterrupted when MainActivity goes to background or screen turns off!
-                RecordingManager.bindCamera(
-                    context = this@RecordingService,
-                    lifecycleOwner = this@RecordingService,
-                    lensFacing = lensFacing,
-                    quality = quality,
-                    surfaceProvider = RecordingManager.currentSurfaceProvider
-                ) {
+                if (RecordingManager.isCameraReady) {
+                    Log.d(TAG, "Camera already initialized, starting background recording immediately")
                     RecordingManager.startRecording(this@RecordingService, audioEnabled)
+                } else {
+                    Log.d(TAG, "Camera not bound yet, binding with CameraLifecycleOwner...")
+                    RecordingManager.bindCamera(
+                        context = this@RecordingService,
+                        lifecycleOwner = RecordingManager.cameraLifecycleOwner,
+                        lensFacing = lensFacing,
+                        quality = quality,
+                        surfaceProvider = RecordingManager.currentSurfaceProvider
+                    ) {
+                        RecordingManager.startRecording(this@RecordingService, audioEnabled)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed starting recording in background service", e)
